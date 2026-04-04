@@ -1,0 +1,15 @@
+fastapi
+uvicorn
+sqlalchemy
+yfinance
+aiohttp
+beautifulsoup4
+Pillow
+groq
+python-multipart
+feedparser
+apscheduler
+httpx
+jinja2
+pydantic
+curl_cffi

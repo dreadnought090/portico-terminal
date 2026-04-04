@@ -1,0 +1,571 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Portico Terminal</title>
+    <link rel="stylesheet" href="/frontend/css/terminal.css?v=20260403a">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+    <!-- Animate.css -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/animate.css/4.1.1/animate.min.css">
+    <!-- Tippy.js -->
+    <link rel="stylesheet" href="https://unpkg.com/tippy.js@6/dist/tippy.css">
+    <!-- AG Grid -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ag-grid-community@31.0.3/styles/ag-grid.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ag-grid-community@31.0.3/styles/ag-theme-alpine.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+</head>
+<body>
+    <!-- TOP BAR -->
+    <header class="top-bar">
+        <div class="top-bar-left">
+            <span class="logo"><span class="logo-accent">PORTICO</span> <span style="color:var(--text-muted);font-size:12px;margin-left:2px;">Terminal</span></span>
+            <span class="separator">|</span>
+            <span class="market-ticker" id="ihsg-ticker">IHSG: --</span>
+        </div>
+        <div class="top-bar-center">
+            <div class="search-box">
+                <i class="fas fa-search"></i>
+                <input type="text" id="search-input" placeholder="Ketik kode saham (cth: BBCA, TLKM)..." autocomplete="off">
+                <kbd>Enter</kbd>
+            </div>
+        </div>
+        <div class="top-bar-right">
+            <span class="clock" id="clock"></span>
+            <button class="btn-icon" onclick="refreshPortfolio()" data-tippy-content="Refresh Data">
+                <i class="fas fa-sync-alt"></i>
+            </button>
+        </div>
+    </header>
+
+    <!-- RUNNING TICKER BAR -->
+    <div class="ticker-bar">
+        <div class="ticker-track" id="ticker-track">
+            <span class="ticker-item placeholder-ticker">Memuat data portfolio...</span>
+        </div>
+    </div>
+
+    <!-- MAIN LAYOUT -->
+    <div class="main-container">
+        <!-- LEFT SIDEBAR -->
+        <nav class="sidebar">
+            <button class="nav-btn active" onclick="showPanel('dashboard')" data-panel="dashboard">
+                <i class="fas fa-th-large"></i>
+                <span>Dashboard</span>
+            </button>
+            <button class="nav-btn" onclick="showPanel('portfolio')" data-panel="portfolio">
+                <i class="fas fa-briefcase"></i>
+                <span>Portfolio</span>
+            </button>
+            <button class="nav-btn" onclick="showPanel('watchlist')" data-panel="watchlist">
+                <i class="fas fa-eye"></i>
+                <span>Watchlist</span>
+            </button>
+            <button class="nav-btn" onclick="showPanel('stock-detail')" data-panel="stock-detail">
+                <i class="fas fa-chart-bar"></i>
+                <span>Analisis</span>
+            </button>
+            <button class="nav-btn" onclick="showPanel('news')" data-panel="news">
+                <i class="fas fa-newspaper"></i>
+                <span>News</span>
+            </button>
+            <button class="nav-btn" onclick="showPanel('disclosure')" data-panel="disclosure">
+                <i class="fas fa-file-alt"></i>
+                <span>Disclosure</span>
+            </button>
+            <div class="sidebar-divider"></div>
+            <button class="nav-btn" onclick="showPanel('add-stock')" data-panel="add-stock">
+                <i class="fas fa-plus-circle"></i>
+                <span>Tambah</span>
+            </button>
+            <button class="nav-btn" onclick="showPanel('screenshot')" data-panel="screenshot">
+                <i class="fas fa-camera"></i>
+                <span>Screenshot</span>
+            </button>
+        </nav>
+
+        <!-- CONTENT AREA -->
+        <main class="content">
+            <!-- DASHBOARD PANEL -->
+            <div class="panel active" id="panel-dashboard">
+                <div class="panel-header">
+                    <h2><i class="fas fa-th-large"></i> Market Dashboard</h2>
+                    <span class="update-time" id="dashboard-update-time"></span>
+                </div>
+                <div class="market-cards">
+                    <div class="market-card card-ihsg">
+                        <div class="card-icon"><i class="fas fa-chart-line"></i></div>
+                        <div class="card-label">IHSG</div>
+                        <div class="card-value" id="mc-ihsg">--</div>
+                        <div class="card-change" id="mc-ihsg-change">--</div>
+                    </div>
+                    <div class="market-card card-value-type">
+                        <div class="card-icon"><i class="fas fa-wallet"></i></div>
+                        <div class="card-label">Total Portfolio Value</div>
+                        <div class="card-value" id="mc-portfolio-value">Rp 0</div>
+                        <div class="card-change" id="mc-portfolio-pnl">--</div>
+                    </div>
+                    <div class="market-card">
+                        <div class="card-icon"><i class="fas fa-coins"></i></div>
+                        <div class="card-label">Total Cost</div>
+                        <div class="card-value" id="mc-total-cost">Rp 0</div>
+                        <div class="card-change" id="mc-total-items">0 saham</div>
+                    </div>
+                    <div class="market-card">
+                        <div class="card-icon"><i class="fas fa-chart-pie"></i></div>
+                        <div class="card-label">Unrealized P&L</div>
+                        <div class="card-value" id="mc-pnl">Rp 0</div>
+                        <div class="card-change" id="mc-pnl-pct">0%</div>
+                    </div>
+                </div>
+                <div class="dashboard-grid" style="grid-template-columns:1fr;">
+                    <div class="dash-section">
+                        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+                            <h3 style="margin:0;">Alokasi per Saham</h3>
+                            <div style="display:flex;gap:4px;">
+                                <button class="btn btn-ghost btn-sm" onclick="zoomTickerChart(-1)" data-tippy-content="Zoom Out"><i class="fas fa-search-minus"></i></button>
+                                <button class="btn btn-ghost btn-sm" onclick="zoomTickerChart(0)" data-tippy-content="Reset"><i class="fas fa-compress-arrows-alt"></i></button>
+                                <button class="btn btn-ghost btn-sm" onclick="zoomTickerChart(1)" data-tippy-content="Zoom In"><i class="fas fa-search-plus"></i></button>
+                            </div>
+                        </div>
+                        <div id="ticker-chart-wrapper" style="display:flex;align-items:center;gap:16px;height:280px;transition:height 0.2s;">
+                            <div style="flex:0 0 auto;width:240px;height:100%;position:relative;">
+                                <canvas id="ticker-chart"></canvas>
+                            </div>
+                            <div id="ticker-chart-legend" style="flex:1;overflow-y:auto;max-height:100%;"></div>
+                        </div>
+                    </div>
+                </div>
+                <div class="dashboard-grid">
+                    <div class="dash-section">
+                        <h3>Alokasi per Sektor</h3>
+                        <canvas id="sector-chart" height="250"></canvas>
+                    </div>
+                    <div class="dash-section">
+                        <h3>Alokasi per Tipe Sekuritas</h3>
+                        <canvas id="type-chart" height="250"></canvas>
+                    </div>
+                </div>
+                <div class="dash-section full-width">
+                    <h3>Portfolio Overview</h3>
+                    <div class="table-wrapper">
+                        <table class="data-table" id="dashboard-portfolio-table">
+                            <thead>
+                                <tr>
+                                    <th>Ticker</th>
+                                    <th>Company</th>
+                                    <th>Sektor</th>
+                                    <th class="num">Lot</th>
+                                    <th class="num">Avg Price</th>
+                                    <th class="num">Last Price</th>
+                                    <th class="num">Market Value</th>
+                                    <th class="num">P&L</th>
+                                    <th class="num">P&L %</th>
+                                </tr>
+                            </thead>
+                            <tbody id="dashboard-portfolio-body"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- PORTFOLIO PANEL -->
+            <div class="panel" id="panel-portfolio">
+                <div class="panel-header">
+                    <h2><i class="fas fa-briefcase"></i> Portfolio Management</h2>
+                    <div class="panel-actions">
+                        <select id="portfolio-bulk-broker" class="hidden" style="padding:4px 8px;border-radius:6px;background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border);font-size:11px;">
+                            <option value="">Pindah Broker...</option>
+                        </select>
+                        <button class="btn btn-accent btn-sm hidden" id="portfolio-bulk-broker-btn" onclick="bulkUpdateBroker()">
+                            <i class="fas fa-exchange-alt"></i> Pindah Broker (<span id="portfolio-broker-count">0</span>)
+                        </button>
+                        <button class="btn btn-danger btn-sm hidden" id="portfolio-bulk-delete" onclick="bulkDeletePortfolio()">
+                            <i class="fas fa-trash"></i> Hapus (<span id="portfolio-selected-count">0</span>)
+                        </button>
+                        <button class="btn btn-primary" onclick="exportPortfolioExcel()">
+                            <i class="fas fa-file-excel"></i> Export Excel
+                        </button>
+                        <button class="btn btn-primary" onclick="refreshPortfolio()">
+                            <i class="fas fa-sync-alt"></i> Refresh Harga
+                        </button>
+                    </div>
+                </div>
+                <div class="portfolio-summary" id="portfolio-summary"></div>
+                <div class="tab-bar">
+                    <button class="tab active" onclick="showPortfolioView('all', event)">Semua</button>
+                    <button class="tab" onclick="showPortfolioView('combined', event)">Gabungan</button>
+                    <button class="tab" onclick="showPortfolioView('by-broker', event)">Per Sekuritas</button>
+                    <button class="tab" onclick="showPortfolioView('by-type', event)">Per Tipe</button>
+                    <button class="tab" onclick="showPortfolioView('by-sector', event)">Per Sektor</button>
+                </div>
+                <div class="table-wrapper">
+                    <table class="data-table" id="portfolio-table">
+                        <thead>
+                            <tr>
+                                <th class="checkbox-col"><input type="checkbox" id="portfolio-select-all" onchange="toggleAllPortfolio(this)"></th>
+                                <th class="sortable" onclick="sortPortfolio('ticker')">Ticker <i class="fas fa-sort"></i></th>
+                                <th class="sortable" onclick="sortPortfolio('company_name')">Company <i class="fas fa-sort"></i></th>
+                                <th class="sortable" onclick="sortPortfolio('security_type')">Tipe <i class="fas fa-sort"></i></th>
+                                <th class="sortable" onclick="sortPortfolio('sub_sector')">Sektor <i class="fas fa-sort"></i></th>
+                                <th class="num sortable" onclick="sortPortfolio('lot')">Lot <i class="fas fa-sort"></i></th>
+                                <th class="num sortable" onclick="sortPortfolio('shares')">Shares <i class="fas fa-sort"></i></th>
+                                <th class="num sortable" onclick="sortPortfolio('avg_price')">Avg Price <i class="fas fa-sort"></i></th>
+                                <th class="num sortable" onclick="sortPortfolio('total_cost')">Total Cost <i class="fas fa-sort"></i></th>
+                                <th class="num sortable" onclick="sortPortfolio('current_price')">Last Price <i class="fas fa-sort"></i></th>
+                                <th class="num sortable" onclick="sortPortfolio('market_value')">Market Value <i class="fas fa-sort"></i></th>
+                                <th class="num sortable" onclick="sortPortfolio('unrealized_pnl')">P&L <i class="fas fa-sort"></i></th>
+                                <th class="num sortable" onclick="sortPortfolio('unrealized_pnl_pct')">P&L % <i class="fas fa-sort"></i></th>
+                                <th>Aksi</th>
+                            </tr>
+                        </thead>
+                        <tbody id="portfolio-body"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- WATCHLIST PANEL -->
+            <div class="panel" id="panel-watchlist">
+                <div class="panel-header">
+                    <h2><i class="fas fa-eye"></i> Watchlist</h2>
+                    <div class="panel-actions">
+                        <button class="btn btn-danger btn-sm hidden" id="watchlist-bulk-delete" onclick="bulkDeleteWatchlist()">
+                            <i class="fas fa-trash"></i> Hapus (<span id="watchlist-selected-count">0</span>)
+                        </button>
+                    </div>
+                </div>
+                <div id="watchlist-grid" class="ag-theme-alpine-dark" style="height:500px;width:100%;"></div>
+            </div>
+
+            <!-- STOCK DETAIL PANEL (Enhanced with tabs) -->
+            <div class="panel" id="panel-stock-detail">
+                <div class="panel-header">
+                    <h2><i class="fas fa-chart-bar"></i> Analisis Saham</h2>
+                </div>
+                <div class="search-inline">
+                    <input type="text" id="detail-ticker-input" placeholder="Masukkan kode saham..." />
+                    <button class="btn btn-primary" onclick="loadStockDetail()">
+                        <i class="fas fa-search"></i> Analisis
+                    </button>
+                </div>
+                <div id="stock-detail-content">
+                    <p class="placeholder-text">Masukkan kode saham untuk melihat detail analisis lengkap<br><span style="font-size:12px;margin-top:8px;display:inline-block;">Termasuk: Harga, Chart, Profile Perusahaan, Keuangan, Kepemilikan, dan Berita</span></p>
+                </div>
+            </div>
+
+            <!-- NEWS PANEL -->
+            <div class="panel" id="panel-news">
+                <div class="panel-header">
+                    <h2><i class="fas fa-newspaper"></i> Berita & Informasi</h2>
+                </div>
+                <div class="search-inline">
+                    <input type="text" id="news-ticker-input" placeholder="Filter berita per ticker (kosongkan untuk semua)..." />
+                    <button class="btn btn-primary" onclick="loadNews()">Cari Berita</button>
+                    <select id="news-sort" onchange="resortNews()" style="margin-left:8px;">
+                        <option value="urgency">Urutan: Urgensi</option>
+                        <option value="date">Urutan: Terbaru</option>
+                    </select>
+                </div>
+                <div class="news-feed" id="news-feed">
+                    <p class="placeholder-text">Masukkan ticker untuk memuat berita terkait</p>
+                </div>
+            </div>
+
+            <!-- DISCLOSURE PANEL -->
+            <div class="panel" id="panel-disclosure">
+                <div class="panel-header">
+                    <h2><i class="fas fa-file-alt"></i> Keterbukaan Informasi IDX</h2>
+                </div>
+                <div class="search-inline">
+                    <input type="text" id="disclosure-ticker-input" placeholder="Filter per emiten (opsional, cth: BBCA)..." onkeydown="if(event.key==='Enter')loadDisclosure()" />
+                    <button class="btn btn-primary" onclick="loadDisclosure()"><i class="fas fa-sync-alt"></i> Refresh</button>
+                </div>
+                <div id="disclosure-content">
+                    <p class="placeholder-text">Memuat data keterbukaan informasi...</p>
+                </div>
+            </div>
+
+            <!-- ADD STOCK PANEL -->
+            <div class="panel" id="panel-add-stock">
+                <div class="panel-header">
+                    <h2><i class="fas fa-plus-circle"></i> Tambah Aset ke Portfolio</h2>
+                </div>
+                <form class="stock-form" onsubmit="addStock(event)">
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label>Tipe Aset</label>
+                            <select id="add-security-type" onchange="onAssetTypeChange()">
+                                <option value="Saham" selected>Saham</option>
+                                <option value="Obligasi">Obligasi</option>
+                                <option value="Reksadana">Reksadana</option>
+                                <option value="ETF">ETF</option>
+                                <option value="Warrant">Warrant</option>
+                                <option value="Right">Right</option>
+                                <option value="Lainnya">Lainnya</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Sekuritas / Platform</label>
+                            <select id="add-broker">
+                                <option value="">-- Pilih Sekuritas --</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Tipe Akun</label>
+                            <select id="add-account-type">
+                                <option value="Reguler">Reguler</option>
+                                <option value="Margin">Margin</option>
+                                <option value="Syariah">Syariah</option>
+                            </select>
+                        </div>
+
+                        <!-- Saham / ETF / Warrant / Right fields -->
+                        <div class="form-group asset-field asset-saham asset-etf asset-warrant asset-right">
+                            <label id="lbl-ticker">Kode Saham *</label>
+                            <input type="text" id="add-ticker" placeholder="cth: BBCA" required maxlength="10">
+                        </div>
+                        <div class="form-group asset-field asset-saham asset-etf asset-warrant asset-right">
+                            <label>Jumlah Lot</label>
+                            <input type="number" id="add-lot" placeholder="cth: 10" min="0">
+                        </div>
+                        <div class="form-group asset-field asset-saham asset-etf asset-warrant asset-right">
+                            <label>Jumlah Lembar (opsional)</label>
+                            <input type="number" id="add-shares" placeholder="Auto: lot x 100" min="0">
+                        </div>
+                        <div class="form-group asset-field asset-saham asset-etf asset-warrant asset-right">
+                            <label>Harga Rata-rata (Avg Price) *</label>
+                            <input type="number" id="add-avg-price" placeholder="cth: 8500" required min="0" step="any">
+                        </div>
+
+                        <!-- Obligasi fields -->
+                        <div class="form-group asset-field asset-obligasi" style="display:none">
+                            <label>Kode / Seri Obligasi *</label>
+                            <input type="text" id="add-bond-code" placeholder="cth: FR0098, PBS038" maxlength="20">
+                        </div>
+                        <div class="form-group asset-field asset-obligasi" style="display:none">
+                            <label>Nominal (Rp) *</label>
+                            <input type="number" id="add-bond-nominal" placeholder="cth: 10000000" min="0" step="any">
+                        </div>
+                        <div class="form-group asset-field asset-obligasi" style="display:none">
+                            <label>Kupon / Yield (%)</label>
+                            <input type="number" id="add-bond-coupon" placeholder="cth: 6.5" min="0" step="any">
+                        </div>
+                        <div class="form-group asset-field asset-obligasi" style="display:none">
+                            <label>Harga Beli (% par value)</label>
+                            <input type="number" id="add-bond-price" placeholder="cth: 100.5" min="0" step="any">
+                        </div>
+
+                        <!-- Reksadana fields -->
+                        <div class="form-group asset-field asset-reksadana" style="display:none">
+                            <label>Nama Produk Reksadana *</label>
+                            <input type="text" id="add-rd-name" placeholder="cth: Sucorinvest Equity Fund">
+                        </div>
+                        <div class="form-group asset-field asset-reksadana" style="display:none">
+                            <label>Jumlah Unit</label>
+                            <input type="number" id="add-rd-unit" placeholder="cth: 500.25" min="0" step="any">
+                        </div>
+                        <div class="form-group asset-field asset-reksadana" style="display:none">
+                            <label>NAV / Unit (Rp)</label>
+                            <input type="number" id="add-rd-nav" placeholder="cth: 1250.50" min="0" step="any">
+                        </div>
+                        <div class="form-group asset-field asset-reksadana" style="display:none">
+                            <label>Total Investasi (Rp)</label>
+                            <input type="number" id="add-rd-total" placeholder="cth: 5000000" min="0" step="any">
+                        </div>
+
+                        <div class="form-group">
+                            <label>Catatan</label>
+                            <input type="text" id="add-notes" placeholder="Catatan opsional...">
+                        </div>
+                    </div>
+                    <button type="submit" class="btn btn-primary btn-lg">
+                        <i class="fas fa-plus"></i> Tambahkan ke Portfolio
+                    </button>
+                </form>
+                <div id="add-result" class="result-message"></div>
+            </div>
+
+            <!-- IMPORT PANEL (Screenshot + Excel Paste) -->
+            <div class="panel" id="panel-screenshot">
+                <div class="panel-header">
+                    <h2><i class="fas fa-file-import"></i> Import Portfolio</h2>
+                </div>
+                <div class="tab-bar">
+                    <button class="tab active" onclick="switchImportTab('screenshot')"><i class="fas fa-camera"></i> Screenshot OCR</button>
+                    <button class="tab" onclick="switchImportTab('paste')"><i class="fas fa-paste"></i> Paste dari Excel</button>
+                </div>
+
+                <!-- TAB: Screenshot OCR -->
+                <div id="import-tab-screenshot">
+                    <div style="display:flex;gap:12px;margin-bottom:16px;max-width:500px;">
+                        <div class="form-group" style="flex:1;">
+                            <label>Sekuritas / Platform</label>
+                            <select id="ocr-broker">
+                                <option value="">-- Pilih Sekuritas --</option>
+                            </select>
+                        </div>
+                        <div class="form-group" style="flex:0 0 140px;">
+                            <label>Tipe Akun</label>
+                            <select id="ocr-account-type">
+                                <option value="Reguler">Reguler</option>
+                                <option value="Margin">Margin</option>
+                                <option value="Syariah">Syariah</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="upload-area" id="upload-area">
+                        <i class="fas fa-cloud-upload-alt upload-icon"></i>
+                        <p>Drag & drop screenshot portfolio di sini</p>
+                        <p class="small">atau klik untuk memilih file</p>
+                        <input type="file" id="screenshot-input" accept="image/*" hidden>
+                    </div>
+                    <div id="ocr-preview" class="ocr-preview hidden">
+                        <h3>Hasil OCR - Saham Terdeteksi:</h3>
+                        <div id="ocr-results"></div>
+                        <button class="btn btn-primary" onclick="importOcrResults()">
+                            <i class="fas fa-file-import"></i> Import ke Portfolio
+                        </button>
+                    </div>
+                    <div id="ocr-status" class="result-message"></div>
+                </div>
+
+                <!-- TAB: Paste dari Excel -->
+                <div id="import-tab-paste" style="display:none;">
+                    <div style="display:flex;gap:16px;margin-bottom:16px;">
+                        <div class="form-group" style="flex:1;max-width:250px;">
+                            <label>Sekuritas / Platform</label>
+                            <select id="paste-broker">
+                                <option value="">-- Pilih Sekuritas --</option>
+                            </select>
+                        </div>
+                        <div class="form-group" style="flex:0 0 150px;">
+                            <label>Tipe Akun</label>
+                            <select id="paste-account-type">
+                                <option value="Reguler">Reguler</option>
+                                <option value="Margin">Margin</option>
+                                <option value="Syariah">Syariah</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Paste data dari Excel (Ctrl+V)</label>
+                        <textarea id="paste-input" rows="10" placeholder="Copy baris-baris dari Excel lalu paste di sini...&#10;&#10;Format yang didukung:&#10;No  Code  Notasi  Avg  Last  Lot  Shares  Value  P/L  %&#10;&#10;Atau format minimal:&#10;Code  Avg  Lot"
+                            style="width:100%;padding:12px 14px;background:var(--bg-input);border:1px solid var(--border);border-radius:8px;color:var(--text-primary);font-family:'JetBrains Mono',monospace;font-size:12px;resize:vertical;min-height:160px;transition:border-color 0.25s;"></textarea>
+                    </div>
+                    <div style="display:flex;gap:8px;margin-bottom:16px;">
+                        <button class="btn btn-primary" onclick="parsePasteData()">
+                            <i class="fas fa-search"></i> Parse Data
+                        </button>
+                        <button class="btn btn-ghost" onclick="document.getElementById('paste-input').value='';document.getElementById('paste-preview').classList.add('hidden');">
+                            <i class="fas fa-eraser"></i> Bersihkan
+                        </button>
+                    </div>
+                    <div id="paste-preview" class="ocr-preview hidden">
+                        <h3 id="paste-preview-title">Saham Terdeteksi:</h3>
+                        <div class="table-wrapper" style="margin-bottom:12px;">
+                            <table class="data-table" id="paste-table">
+                                <thead>
+                                    <tr>
+                                        <th class="checkbox-col"><input type="checkbox" id="paste-select-all" onchange="toggleAllPaste(this)" checked></th>
+                                        <th>Ticker</th>
+                                        <th class="num">Avg Price</th>
+                                        <th class="num">Lot</th>
+                                        <th class="num">Shares</th>
+                                        <th class="num">Last Price</th>
+                                        <th class="num">Value</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="paste-table-body"></tbody>
+                            </table>
+                        </div>
+                        <button class="btn btn-primary" onclick="importPasteResults()">
+                            <i class="fas fa-file-import"></i> Import ke Portfolio
+                        </button>
+                    </div>
+                    <div id="paste-status" class="result-message"></div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- TOAST NOTIFICATION STACK -->
+    <div id="toast-container" class="toast-container"></div>
+
+    <!-- LEGACY TOAST (kept for compatibility) -->
+    <div id="toast" class="toast hidden"></div>
+
+    <!-- EDIT MODAL -->
+    <div class="modal-overlay hidden" id="edit-modal">
+        <div class="modal">
+            <div class="modal-header">
+                <h3>Edit Portfolio Item</h3>
+                <button class="btn-icon" onclick="closeEditModal()"><i class="fas fa-times"></i></button>
+            </div>
+            <form onsubmit="saveEdit(event)">
+                <input type="hidden" id="edit-id">
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label>Ticker / Kode</label>
+                        <input type="text" id="edit-ticker" disabled>
+                    </div>
+                    <div class="form-group">
+                        <label>Tipe Aset</label>
+                        <select id="edit-security-type">
+                            <option value="Saham">Saham</option>
+                            <option value="Obligasi">Obligasi</option>
+                            <option value="Reksadana">Reksadana</option>
+                            <option value="ETF">ETF</option>
+                            <option value="Warrant">Warrant</option>
+                            <option value="Right">Right</option>
+                            <option value="Lainnya">Lainnya</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Sekuritas / Platform</label>
+                        <select id="edit-broker">
+                            <option value="">-- Pilih --</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Tipe Akun</label>
+                        <select id="edit-account-type">
+                            <option value="Reguler">Reguler</option>
+                            <option value="Margin">Margin</option>
+                            <option value="Syariah">Syariah</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Jumlah Lot</label>
+                        <input type="number" id="edit-lot" min="0">
+                    </div>
+                    <div class="form-group">
+                        <label>Avg Price</label>
+                        <input type="number" id="edit-avg-price" min="0" step="any">
+                    </div>
+                    <div class="form-group">
+                        <label>Catatan</label>
+                        <input type="text" id="edit-notes">
+                    </div>
+                </div>
+                <button type="submit" class="btn btn-primary">Simpan</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- TradingView Lightweight Charts -->
+    <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
+    <!-- AG Grid Community -->
+    <script src="https://cdn.jsdelivr.net/npm/ag-grid-community@31.0.3/dist/ag-grid-community.min.noStyle.js"></script>
+    <!-- Numeral.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/numeral.js/2.0.6/numeral.min.js"></script>
+    <!-- Tippy.js + Popper -->
+    <script src="https://unpkg.com/@popperjs/core@2"></script>
+    <script src="https://unpkg.com/tippy.js@6"></script>
+    <!-- Sortable.js -->
+    <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js"></script>
+    <!-- SheetJS for Excel export -->
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+
+    <script src="/frontend/js/app.js?v=20260403b"></script>
+</body>
+</html>
