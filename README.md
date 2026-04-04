@@ -56,4 +56,4 @@ _(Add screenshots here)_
 
 ## License
 
-MIT
+GPL-3.0 — see [LICENSE](LICENSE)
