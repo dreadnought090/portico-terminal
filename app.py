@@ -29,7 +29,7 @@ from contextlib import asynccontextmanager
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from backend.database import get_db, init_db
-from backend.models import PortfolioItem, StockCache, NewsItem, Watchlist, SecurityType, SubSector
+from backend.models import PortfolioItem, StockCache, NewsItem, Watchlist, SecurityType, SubSector, PortfolioSnapshot
 from backend.stock_service import (
     fetch_stock_data, fetch_stock_history, fetch_news_for_ticker,
     fetch_idx_disclosure, fetch_market_summary, IDX_SECTORS,
@@ -80,11 +80,54 @@ async def update_all_portfolio_prices():
         db.close()
 
 
+def take_portfolio_snapshot(db: Session = None):
+    """Save a snapshot of today's portfolio totals."""
+    from backend.database import SessionLocal
+    own_db = db is None
+    if own_db:
+        db = SessionLocal()
+    try:
+        items = db.query(PortfolioItem).all()
+        if not items:
+            return
+        today = datetime.now(timezone.utc).date()
+        total_cost = sum(i.total_cost for i in items)
+        total_mv = sum(i.market_value for i in items)
+        total_pnl = total_mv - total_cost
+        total_pnl_pct = (total_pnl / total_cost * 100) if total_cost else 0
+
+        snap = db.query(PortfolioSnapshot).filter_by(snapshot_date=today).first()
+        if snap:
+            snap.total_cost = total_cost
+            snap.total_market_value = total_mv
+            snap.total_pnl = total_pnl
+            snap.total_pnl_pct = total_pnl_pct
+            snap.total_items = len(items)
+        else:
+            db.add(PortfolioSnapshot(
+                snapshot_date=today,
+                total_cost=total_cost,
+                total_market_value=total_mv,
+                total_pnl=total_pnl,
+                total_pnl_pct=total_pnl_pct,
+                total_items=len(items),
+            ))
+        db.commit()
+    except Exception:
+        logger.exception("Failed to take portfolio snapshot")
+    finally:
+        if own_db:
+            db.close()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
     scheduler.add_job(update_all_portfolio_prices, "interval", minutes=15, id="price_update")
+    scheduler.add_job(take_portfolio_snapshot, "cron", hour=16, minute=5, id="daily_snapshot")
     scheduler.start()
+    # Take snapshot on startup if portfolio has data
+    take_portfolio_snapshot()
     yield
     scheduler.shutdown()
 
@@ -498,7 +541,36 @@ async def refresh_portfolio(db: Session = Depends(get_db)):
             logger.exception("Failed to refresh %s", item.ticker)
             continue
     db.commit()
+    take_portfolio_snapshot(db)
     return {"message": f"{updated}/{len(items)} saham berhasil di-update"}
+
+
+@app.get("/api/portfolio/history")
+def get_portfolio_history(period: str = "all", db: Session = Depends(get_db)):
+    """Get historical portfolio snapshots for charting."""
+    from datetime import timedelta
+    query = db.query(PortfolioSnapshot).order_by(PortfolioSnapshot.snapshot_date.asc())
+
+    if period != "all":
+        days_map = {"1mo": 30, "3mo": 90, "6mo": 180, "1y": 365}
+        days = days_map.get(period, 9999)
+        cutoff = datetime.now(timezone.utc).date() - timedelta(days=days)
+        query = query.filter(PortfolioSnapshot.snapshot_date >= cutoff)
+
+    snaps = query.all()
+    return {
+        "snapshots": [
+            {
+                "date": s.snapshot_date.isoformat(),
+                "value": s.total_market_value,
+                "cost": s.total_cost,
+                "pnl": s.total_pnl,
+                "pnl_pct": s.total_pnl_pct,
+                "items": s.total_items,
+            }
+            for s in snaps
+        ]
+    }
 
 
 # ── Screenshot OCR API ────────────────────────────────────────────────

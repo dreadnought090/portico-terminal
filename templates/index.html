@@ -11,7 +11,7 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Portico">
     <link rel="apple-touch-icon" href="/static/icon-192.png">
-    <link rel="stylesheet" href="/frontend/css/terminal.css?v=20260403a">
+    <link rel="stylesheet" href="/frontend/css/terminal.css?v=20260404a">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
     <!-- Animate.css -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/animate.css/4.1.1/animate.min.css">
@@ -63,6 +63,10 @@
             <button class="nav-btn" onclick="showPanel('portfolio')" data-panel="portfolio">
                 <i class="fas fa-briefcase"></i>
                 <span>Portfolio</span>
+            </button>
+            <button class="nav-btn" onclick="showPanel('history')" data-panel="history">
+                <i class="fas fa-chart-area"></i>
+                <span>History</span>
             </button>
             <button class="nav-btn" onclick="showPanel('watchlist')" data-panel="watchlist">
                 <i class="fas fa-eye"></i>
@@ -227,6 +231,37 @@
                             </tr>
                         </thead>
                         <tbody id="portfolio-body"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- HISTORY PANEL -->
+            <div class="panel" id="panel-history">
+                <div class="panel-header">
+                    <h2><i class="fas fa-chart-area"></i> Portfolio History</h2>
+                </div>
+                <div class="history-summary" id="history-summary"></div>
+                <div class="chart-period-btns" id="history-period-btns" style="margin-bottom:12px;">
+                    <button onclick="loadHistory('1mo')" class="period-btn">1M</button>
+                    <button onclick="loadHistory('3mo')" class="period-btn">3M</button>
+                    <button onclick="loadHistory('6mo')" class="period-btn">6M</button>
+                    <button onclick="loadHistory('1y')" class="period-btn">1Y</button>
+                    <button onclick="loadHistory('all')" class="period-btn active">All</button>
+                </div>
+                <div id="history-chart" style="height:350px;border-radius:10px;overflow:hidden;"></div>
+                <div class="table-wrapper" style="margin-top:16px;">
+                    <table class="data-table" id="history-table">
+                        <thead>
+                            <tr>
+                                <th>Tanggal</th>
+                                <th class="num">Jumlah Saham</th>
+                                <th class="num">Total Cost</th>
+                                <th class="num">Market Value</th>
+                                <th class="num">P&L</th>
+                                <th class="num">P&L %</th>
+                            </tr>
+                        </thead>
+                        <tbody id="history-table-body"></tbody>
                     </table>
                 </div>
             </div>
@@ -573,7 +608,7 @@
     <!-- SheetJS for Excel export -->
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 
-    <script src="/frontend/js/app.js?v=20260403b"></script>
+    <script src="/frontend/js/app.js?v=20260404a"></script>
     <script>
         if ('serviceWorker' in navigator) {
             navigator.serviceWorker.register('/static/sw.js').catch(() => {});

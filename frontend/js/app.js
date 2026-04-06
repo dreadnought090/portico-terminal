@@ -19,6 +19,7 @@ let tickerChart = null;
 let ocrResults = [];
 let watchlistGridApi = null;
 let detailRequestId = 0;
+let historyChart = null;
 
 // ── COMPLETE BROKER/SEKURITAS LIST (IDX Active Members) ──────────────
 
@@ -253,6 +254,7 @@ function showPanel(panelId) {
     switch (panelId) {
         case 'dashboard': loadDashboard(); break;
         case 'portfolio': loadPortfolio(); break;
+        case 'history': loadHistory(); break;
         case 'watchlist': loadWatchlist(); break;
         case 'news': loadNews(); break;
         case 'disclosure': loadDisclosure(); break;
@@ -908,6 +910,110 @@ async function refreshPortfolio() {
         showToast(data.message, 'success', 5000);
         loadDashboard();
     } catch (err) { showToast('Gagal refresh harga', 'error', 5000); }
+}
+
+// ── PORTFOLIO HISTORY CHART ──────────────────────────────────────────
+
+async function loadHistory(period = 'all') {
+    // Update active period button
+    document.querySelectorAll('#history-period-btns .period-btn').forEach(b => b.classList.remove('active'));
+    const btns = document.querySelectorAll('#history-period-btns .period-btn');
+    btns.forEach(b => { if (b.textContent.trim().toLowerCase().replace(' ', '') === period.replace('mo', 'M').replace('1y', '1Y') || (period === 'all' && b.textContent.trim() === 'All') || (period === '1mo' && b.textContent.trim() === '1M') || (period === '3mo' && b.textContent.trim() === '3M') || (period === '6mo' && b.textContent.trim() === '6M') || (period === '1y' && b.textContent.trim() === '1Y')) b.classList.add('active'); });
+
+    try {
+        const data = await apiFetch(`${API}/api/portfolio/history?period=${period}`);
+        const snaps = data.snapshots;
+
+        if (snaps.length === 0) {
+            document.getElementById('history-summary').innerHTML = '<p class="placeholder-text">Belum ada data history. Data akan tercatat otomatis setiap hari.</p>';
+            document.getElementById('history-chart').innerHTML = '';
+            document.getElementById('history-table-body').innerHTML = '';
+            return;
+        }
+
+        renderHistorySummary(snaps);
+        renderHistoryChart(snaps);
+        renderHistoryTable(snaps);
+    } catch (err) {
+        showToast('Gagal memuat history: ' + err.message, 'error');
+    }
+}
+
+function renderHistorySummary(snaps) {
+    const container = document.getElementById('history-summary');
+    if (snaps.length === 0) { container.innerHTML = ''; return; }
+
+    const latest = snaps[snaps.length - 1];
+    const first = snaps[0];
+    const change = latest.value - first.value;
+    const changePct = first.value ? (change / first.value * 100) : 0;
+    const best = snaps.reduce((a, b) => b.value > a.value ? b : a);
+    const worst = snaps.reduce((a, b) => b.value < a.value ? b : a);
+
+    container.innerHTML = `
+        <div class="portfolio-summary">
+            <div class="summary-item"><div class="label">Nilai Saat Ini</div><div class="value">${fmtBigNum(latest.value)}</div></div>
+            <div class="summary-item"><div class="label">Perubahan (${snaps.length} hari)</div><div class="value ${pnlClass(change)}">${fmtBigNum(change)} (${fmtPct(changePct)})</div></div>
+            <div class="summary-item"><div class="label">Tertinggi</div><div class="value positive">${fmtBigNum(best.value)} <span style="font-size:10px;color:var(--text-muted);">${best.date}</span></div></div>
+            <div class="summary-item"><div class="label">Terendah</div><div class="value negative">${fmtBigNum(worst.value)} <span style="font-size:10px;color:var(--text-muted);">${worst.date}</span></div></div>
+        </div>`;
+}
+
+function renderHistoryChart(snaps) {
+    const container = document.getElementById('history-chart');
+    if (!container || snaps.length === 0) return;
+
+    if (historyChart) { historyChart.remove(); historyChart = null; }
+    container.innerHTML = '';
+
+    const values = snaps.map(s => s.value);
+    const isUp = values[values.length - 1] >= values[0];
+    const lineColor = isUp ? '#34d399' : '#f87171';
+    const areaTop = isUp ? 'rgba(16,185,129,0.3)' : 'rgba(239,68,68,0.3)';
+    const areaBottom = isUp ? 'rgba(16,185,129,0)' : 'rgba(239,68,68,0)';
+
+    historyChart = LightweightCharts.createChart(container, {
+        layout: { background: { type: 'solid', color: 'transparent' }, textColor: '#5a6f8c', fontFamily: "'JetBrains Mono', monospace", fontSize: 10 },
+        grid: { vertLines: { color: 'rgba(26,45,74,0.2)' }, horzLines: { color: 'rgba(26,45,74,0.2)' } },
+        crosshair: { mode: LightweightCharts.CrosshairMode.Normal, vertLine: { color: 'rgba(249,115,22,0.3)', width: 1, style: 2, labelBackgroundColor: '#1a2d4a' }, horzLine: { color: 'rgba(249,115,22,0.3)', width: 1, style: 2, labelBackgroundColor: '#1a2d4a' } },
+        rightPriceScale: { borderColor: 'rgba(26,45,74,0.3)', scaleMargins: { top: 0.1, bottom: 0.1 } },
+        timeScale: { borderColor: 'rgba(26,45,74,0.3)', timeVisible: false, fixLeftEdge: true, fixRightEdge: true },
+        handleScroll: { vertTouchDrag: false },
+        handleScale: { axisPressedMouseMove: { time: true, price: false } }
+    });
+
+    const areaSeries = historyChart.addAreaSeries({
+        lineColor, topColor: areaTop, bottomColor: areaBottom, lineWidth: 2,
+        priceFormat: { type: 'custom', formatter: price => fmtBigNum(price) }
+    });
+
+    areaSeries.setData(snaps.map(s => ({ time: s.date, value: s.value })));
+
+    // Cost line (dashed)
+    const costSeries = historyChart.addLineSeries({
+        color: 'rgba(249,115,22,0.5)', lineWidth: 1, lineStyle: 2,
+        priceFormat: { type: 'custom', formatter: price => fmtBigNum(price) },
+        crosshairMarkerVisible: false,
+    });
+    costSeries.setData(snaps.map(s => ({ time: s.date, value: s.cost })));
+
+    historyChart.timeScale().fitContent();
+}
+
+function renderHistoryTable(snaps) {
+    const tbody = document.getElementById('history-table-body');
+    // Show most recent first
+    const reversed = [...snaps].reverse();
+    tbody.innerHTML = reversed.map(s => `
+        <tr>
+            <td>${s.date}</td>
+            <td class="num">${s.items}</td>
+            <td class="num">${fmtBigNum(s.cost)}</td>
+            <td class="num">${fmtBigNum(s.value)}</td>
+            <td class="num ${pnlClass(s.pnl)}">${fmtBigNum(s.pnl)}</td>
+            <td class="num ${pnlClass(s.pnl_pct)}">${fmtPct(s.pnl_pct)}</td>
+        </tr>
+    `).join('');
 }
 
 // ── ADD STOCK ─────────────────────────────────────────────────────────

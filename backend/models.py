@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, DateTime, Text, Enum as SqlEnum
+from sqlalchemy import Column, Integer, String, Float, DateTime, Date, Text, Enum as SqlEnum
 from datetime import datetime, timezone
 from backend.database import Base
 import enum
@@ -96,3 +96,16 @@ class Watchlist(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     ticker = Column(String(10), unique=True, nullable=False)
     added_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class PortfolioSnapshot(Base):
+    __tablename__ = "portfolio_snapshots"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    snapshot_date = Column(Date, unique=True, nullable=False)
+    total_cost = Column(Float, default=0.0)
+    total_market_value = Column(Float, default=0.0)
+    total_pnl = Column(Float, default=0.0)
+    total_pnl_pct = Column(Float, default=0.0)
+    total_items = Column(Integer, default=0)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
