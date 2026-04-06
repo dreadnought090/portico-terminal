@@ -179,6 +179,17 @@ document.addEventListener('DOMContentLoaded', () => {
         if (e.target.files.length > 0) processScreenshot(e.target.files[0]);
     });
 
+    // Infinite scroll for disclosure
+    document.querySelector('.content').addEventListener('scroll', (e) => {
+        const el = e.target;
+        if (el.scrollTop + el.clientHeight >= el.scrollHeight - 200) {
+            const discPanel = document.getElementById('panel-disclosure');
+            if (discPanel && discPanel.classList.contains('active') && disclosureHasMore && !disclosureLoading && disclosureFilter === 'all') {
+                loadDisclosure(true);
+            }
+        }
+    });
+
     // Escape key closes modals
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') {
@@ -1904,6 +1915,9 @@ function renderNewsFeed(container, news, showUrgency = true) {
 
 let cachedDisclosures = [];
 let disclosureFilter = 'all';
+let disclosurePage = 0;
+let disclosureHasMore = true;
+let disclosureLoading = false;
 
 const DISCLOSURE_CATEGORIES = [
     { id: 'rups',       label: 'RUPS',              icon: 'fa-users',          keywords: ['rups', 'rapat umum'] },
@@ -1978,7 +1992,7 @@ function renderDisclosureList() {
         return;
     }
 
-    container.innerHTML = filtered.map(d => {
+    let html = filtered.map(d => {
         const catObj = DISCLOSURE_CATEGORIES.find(c => c.id === d._category) || DISCLOSURE_CATEGORIES[DISCLOSURE_CATEGORIES.length - 1];
         return `
         <div class="disclosure-item">
@@ -1995,28 +2009,57 @@ function renderDisclosureList() {
             </div>
         </div>`;
     }).join('');
+
+    if (disclosureHasMore && disclosureFilter === 'all') {
+        html += `<button class="btn btn-ghost disc-load-more" onclick="loadDisclosure(true)" style="width:100%;padding:12px;margin-top:8px;border:1px dashed var(--border);border-radius:8px;color:var(--accent);font-size:12px;">
+            <i class="fas fa-plus"></i> Muat 50 lagi (${cachedDisclosures.length} dimuat)
+        </button>`;
+    } else if (!disclosureHasMore) {
+        html += `<div style="text-align:center;padding:8px;color:var(--text-muted);font-size:11px;">Semua ${cachedDisclosures.length} data dimuat</div>`;
+    }
+
+    container.innerHTML = html;
 }
 
-async function loadDisclosure() {
+async function loadDisclosure(loadMore = false) {
+    if (disclosureLoading) return;
+    disclosureLoading = true;
     const ticker = document.getElementById('disclosure-ticker-input').value.trim().toUpperCase();
     const container = document.getElementById('disclosure-content');
-    showSkeleton('disclosure-content', 'table');
-    disclosureFilter = 'all';
+
+    if (!loadMore) {
+        showSkeleton('disclosure-content', 'table');
+        disclosureFilter = 'all';
+        disclosurePage = 0;
+        disclosureHasMore = true;
+        cachedDisclosures = [];
+    }
+
     try {
-        const res = await fetch(`${API}/api/disclosure?ticker=${ticker}`);
+        const res = await fetch(`${API}/api/disclosure?ticker=${ticker}&page=${disclosurePage}`);
         const data = await res.json();
+        disclosureHasMore = data.hasMore;
+
         if (!data.disclosures || data.disclosures.length === 0) {
-            cachedDisclosures = [];
-            container.innerHTML = '<p class="placeholder-text">Tidak ada data keterbukaan informasi</p>';
-            document.getElementById('disclosure-filter-bar').innerHTML = '';
+            if (!loadMore) {
+                cachedDisclosures = [];
+                container.innerHTML = '<p class="placeholder-text">Tidak ada data keterbukaan informasi</p>';
+                document.getElementById('disclosure-filter-bar').innerHTML = '';
+            }
+            disclosureLoading = false;
             return;
         }
-        // Categorize each item
-        cachedDisclosures = data.disclosures.map(d => ({ ...d, _category: categorizeDisclosure(d.title) }));
+
+        const newItems = data.disclosures.map(d => ({ ...d, _category: categorizeDisclosure(d.title) }));
+        cachedDisclosures = cachedDisclosures.concat(newItems);
+        disclosurePage++;
+
         renderDisclosureFilters();
         renderDisclosureList();
     } catch (err) {
-        container.innerHTML = `<p class="placeholder-text">Gagal memuat: ${err.message}</p>`;
+        if (!loadMore) container.innerHTML = `<p class="placeholder-text">Gagal memuat: ${err.message}</p>`;
+    } finally {
+        disclosureLoading = false;
     }
 }
 

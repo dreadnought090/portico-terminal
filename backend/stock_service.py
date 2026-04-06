@@ -266,7 +266,7 @@ async def fetch_news_for_ticker(ticker: str) -> list:
         return []
 
 
-async def fetch_idx_disclosure(ticker: str = "") -> list:
+async def fetch_idx_disclosure(ticker: str = "", page: int = 0, page_size: int = 50) -> list:
     """Fetch corporate disclosures/keterbukaan informasi from IDX using curl_cffi."""
     try:
         from curl_cffi import requests as cffi_requests
@@ -278,7 +278,7 @@ async def fetch_idx_disclosure(ticker: str = "") -> list:
 
             # Step 2: Fetch announcements
             url = "https://www.idx.co.id/primary/ListedCompany/GetAnnouncement"
-            params = {"indexFrom": 0, "pageSize": 50, "lang": "id"}
+            params = {"indexFrom": page * page_size, "pageSize": page_size, "lang": "id"}
             if ticker:
                 params["kodeEmiten"] = ticker.upper().replace(".JK", "")
 
@@ -290,7 +290,7 @@ async def fetch_idx_disclosure(ticker: str = "") -> list:
             replies = data.get("Replies", data.get("data", []))
             disclosures = []
 
-            for item in replies[:50]:
+            for item in replies:
                 peng = item.get("pengumuman", item) if isinstance(item, dict) else {}
                 attachments = item.get("attachments", [])
 

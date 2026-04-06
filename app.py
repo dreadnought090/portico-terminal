@@ -231,10 +231,10 @@ async def get_financial_statements(ticker: str, quarters: int = Query(default=8,
 
 
 @app.get("/api/disclosure")
-async def get_disclosure(ticker: str = ""):
+async def get_disclosure(ticker: str = "", page: int = 0):
     """Get IDX corporate disclosures."""
-    disclosures = await fetch_idx_disclosure(ticker)
-    return {"disclosures": disclosures}
+    disclosures = await fetch_idx_disclosure(ticker, page=page, page_size=50)
+    return {"disclosures": disclosures, "page": page, "hasMore": len(disclosures) >= 50}
 
 
 # ── Portfolio API ─────────────────────────────────────────────────────
