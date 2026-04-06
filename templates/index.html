@@ -301,12 +301,8 @@
                     <h2><i class="fas fa-newspaper"></i> Berita & Informasi</h2>
                 </div>
                 <div class="search-inline">
-                    <input type="text" id="news-ticker-input" placeholder="Filter berita per ticker (kosongkan untuk semua)..." />
-                    <button class="btn btn-primary" onclick="loadNews()">Cari Berita</button>
-                    <select id="news-sort" onchange="resortNews()" style="margin-left:8px;">
-                        <option value="urgency">Urutan: Urgensi</option>
-                        <option value="date">Urutan: Terbaru</option>
-                    </select>
+                    <input type="text" id="news-ticker-input" placeholder="Filter berita per ticker (kosongkan untuk semua)..." onkeydown="if(event.key==='Enter')loadNews()" />
+                    <button class="btn btn-primary" onclick="loadNews()"><i class="fas fa-search"></i> Cari</button>
                 </div>
                 <div class="news-feed" id="news-feed">
                     <p class="placeholder-text">Masukkan ticker untuk memuat berita terkait</p>
@@ -609,7 +605,7 @@
     <!-- SheetJS for Excel export -->
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 
-    <script src="/frontend/js/app.js?v=20260404c"></script>
+    <script src="/frontend/js/app.js?v=20260405a"></script>
     <script>
         if ('serviceWorker' in navigator) {
             navigator.serviceWorker.register('/static/sw.js').catch(() => {});

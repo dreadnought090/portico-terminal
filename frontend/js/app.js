@@ -179,13 +179,17 @@ document.addEventListener('DOMContentLoaded', () => {
         if (e.target.files.length > 0) processScreenshot(e.target.files[0]);
     });
 
-    // Infinite scroll for disclosure
+    // Infinite scroll for disclosure + news
     document.querySelector('.content').addEventListener('scroll', (e) => {
         const el = e.target;
         if (el.scrollTop + el.clientHeight >= el.scrollHeight - 200) {
             const discPanel = document.getElementById('panel-disclosure');
             if (discPanel && discPanel.classList.contains('active') && disclosureHasMore && !disclosureLoading && disclosureFilter === 'all') {
                 loadDisclosure(true);
+            }
+            const newsPanel = document.getElementById('panel-news');
+            if (newsPanel && newsPanel.classList.contains('active') && !newsLoading) {
+                loadMoreNews();
             }
         }
     });
@@ -1799,92 +1803,113 @@ function dedupeNews(news) {
     });
 }
 
-function resortNews() {
-    if (cachedNews.length === 0) return;
-    cachedNews = dedupeNews(cachedNews);
-    const sortMode = document.getElementById('news-sort').value;
-    const container = document.getElementById('news-feed');
-    const sorted = sortMode === 'urgency' ? sortNewsByUrgency(cachedNews) : sortNewsByDate(cachedNews);
-    renderNewsFeed(container, sorted, sortMode === 'urgency');
-}
-
 let newsLoadedCount = 0;
 let newsLoading = false;
+let newsHasMore = true;
 const NEWS_BATCH_SIZE = 10;
+const NEWS_PAGE_SIZE = 50;
+let newsDisplayed = 0;
+
+function renderNewsPage() {
+    const container = document.getElementById('news-feed');
+    cachedNews = dedupeNews(cachedNews);
+    const sorted = sortNewsByDate(cachedNews);
+    const page = sorted.slice(0, newsDisplayed);
+
+    renderNewsFeed(container, page, false);
+
+    if (newsHasMore || newsDisplayed < sorted.length) {
+        container.insertAdjacentHTML('beforeend',
+            `<button class="btn btn-ghost news-load-more" onclick="loadMoreNews()" style="width:100%;padding:12px;margin-top:8px;border:1px dashed var(--border);border-radius:8px;color:var(--accent);font-size:12px;">
+                <i class="fas fa-plus"></i> Muat 50 berita lagi (${page.length} ditampilkan)
+            </button>`);
+    } else {
+        container.insertAdjacentHTML('beforeend',
+            `<div style="text-align:center;padding:8px;color:var(--text-muted);font-size:11px;">Semua ${sorted.length} berita dimuat</div>`);
+    }
+}
+
+async function loadMoreNews() {
+    // First: show more from cached if available
+    const sorted = sortNewsByDate(dedupeNews(cachedNews));
+    if (newsDisplayed < sorted.length) {
+        newsDisplayed = Math.min(newsDisplayed + NEWS_PAGE_SIZE, sorted.length);
+        renderNewsPage();
+        // If we've shown almost all cached, also fetch more tickers
+        if (newsDisplayed >= sorted.length - 10 && newsHasMore) {
+            await fetchMoreNewsTickers();
+        }
+        return;
+    }
+    // Otherwise fetch more tickers
+    if (newsHasMore) {
+        await fetchMoreNewsTickers();
+        newsDisplayed = Math.min(newsDisplayed + NEWS_PAGE_SIZE, dedupeNews(cachedNews).length);
+        renderNewsPage();
+    }
+}
+
+async function fetchMoreNewsTickers() {
+    if (newsLoading || !portfolioData) return;
+    newsLoading = true;
+    const loadMoreBtn = document.querySelector('.news-load-more');
+    if (loadMoreBtn) loadMoreBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Memuat...';
+
+    const allTickers = [...new Set(portfolioData.items.map(i => i.ticker))];
+    const batch = allTickers.slice(newsLoadedCount, newsLoadedCount + NEWS_BATCH_SIZE);
+    if (batch.length === 0) { newsHasMore = false; newsLoading = false; return; }
+
+    try {
+        const results = await Promise.allSettled(
+            batch.map(t => fetch(`${API}/api/stock/${t}/news`).then(r => r.json()))
+        );
+        for (const r of results) {
+            if (r.status === 'fulfilled' && r.value.news) cachedNews = cachedNews.concat(r.value.news);
+        }
+        newsLoadedCount += batch.length;
+        if (newsLoadedCount >= allTickers.length) newsHasMore = false;
+    } catch (err) { /* silent */ }
+    newsLoading = false;
+}
 
 async function loadNews(loadMore = false) {
     if (newsLoading && !loadMore) return;
-    newsLoading = true;
     const ticker = document.getElementById('news-ticker-input').value.trim().toUpperCase();
     const container = document.getElementById('news-feed');
 
     if (!loadMore) {
         showSkeleton('news-feed', 'table');
         newsLoadedCount = 0;
+        newsDisplayed = 0;
+        newsHasMore = true;
         cachedNews = [];
     }
 
     if (!ticker) {
         if (portfolioData && portfolioData.items.length > 0) {
-            const allTickers = [...new Set(portfolioData.items.map(i => i.ticker))];
-            const batch = allTickers.slice(newsLoadedCount, newsLoadedCount + NEWS_BATCH_SIZE);
-            if (batch.length === 0) {
-                if (!loadMore) container.innerHTML = '<p class="placeholder-text">Tidak ada berita ditemukan untuk saham di portfolio</p>';
+            await fetchMoreNewsTickers();
+            if (cachedNews.length === 0) {
+                container.innerHTML = '<p class="placeholder-text">Tidak ada berita ditemukan untuk saham di portfolio</p>';
                 return;
             }
-
-            if (loadMore) {
-                // Remove the "load more" button while loading
-                const loadMoreBtn = container.querySelector('.news-load-more');
-                if (loadMoreBtn) loadMoreBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Memuat...';
-            }
-
-            try {
-                const results = await Promise.allSettled(
-                    batch.map(t => fetch(`${API}/api/stock/${t}/news`).then(r => r.json()))
-                );
-                let batchNews = [];
-                for (const r of results) {
-                    if (r.status === 'fulfilled' && r.value.news) {
-                        batchNews = batchNews.concat(r.value.news);
-                    }
-                }
-                newsLoadedCount += batch.length;
-                cachedNews = cachedNews.concat(batchNews);
-
-                if (cachedNews.length === 0) {
-                    container.innerHTML = '<p class="placeholder-text">Tidak ada berita ditemukan untuk saham di portfolio</p>';
-                } else {
-                    resortNews();
-                    // Add "load more" button if there are more tickers
-                    if (newsLoadedCount < allTickers.length) {
-                        const remaining = allTickers.length - newsLoadedCount;
-                        container.insertAdjacentHTML('beforeend',
-                            `<button class="btn btn-ghost news-load-more" onclick="loadNews(true)" style="width:100%;padding:12px;margin-top:8px;border:1px dashed var(--border);border-radius:8px;color:var(--accent);font-size:12px;">
-                                <i class="fas fa-plus"></i> Muat lebih banyak (${remaining} saham lagi, ${newsLoadedCount}/${allTickers.length} dimuat)
-                            </button>`);
-                    } else {
-                        container.insertAdjacentHTML('beforeend',
-                            `<div style="text-align:center;padding:8px;color:var(--text-muted);font-size:11px;">Semua ${allTickers.length} saham dimuat</div>`);
-                    }
-                }
-            } catch (err) {
-                container.innerHTML = `<p class="placeholder-text">Gagal memuat berita: ${err.message}</p>`;
-            }
+            newsDisplayed = Math.min(NEWS_PAGE_SIZE, dedupeNews(cachedNews).length);
+            renderNewsPage();
         } else {
             container.innerHTML = '<p class="placeholder-text">Masukkan ticker atau tambah saham ke portfolio terlebih dahulu</p>';
         }
-        newsLoading = false;
         return;
     }
     try {
+        newsLoading = true;
         const res = await fetch(`${API}/api/stock/${ticker}/news`);
         const data = await res.json();
         cachedNews = data.news;
+        newsHasMore = false;
         if (data.news.length === 0) {
             container.innerHTML = `<p class="placeholder-text">Tidak ada berita ditemukan untuk ${ticker}</p>`;
         } else {
-            resortNews();
+            newsDisplayed = cachedNews.length;
+            renderNewsPage();
         }
     } catch (err) {
         container.innerHTML = `<p class="placeholder-text">Gagal memuat berita: ${err.message}</p>`;
