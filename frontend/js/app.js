@@ -1902,6 +1902,33 @@ function renderNewsFeed(container, news, showUrgency = true) {
 
 // ── DISCLOSURE ────────────────────────────────────────────────────────
 
+let cachedDisclosures = [];
+let disclosureFilter = 'all';
+
+const DISCLOSURE_CATEGORIES = [
+    { id: 'rups',       label: 'RUPS',              icon: 'fa-users',          keywords: ['rups', 'rapat umum'] },
+    { id: 'lapkeu',     label: 'Lap. Keuangan',     icon: 'fa-file-invoice',   keywords: ['laporan keuangan'] },
+    { id: 'dividen',    label: 'Dividen',            icon: 'fa-coins',          keywords: ['dividen', 'dividend'] },
+    { id: 'buyback',    label: 'Buyback',            icon: 'fa-redo',           keywords: ['buyback', 'pembelian kembali'] },
+    { id: 'transaksi',  label: 'Transaksi',          icon: 'fa-exchange-alt',   keywords: ['transaksi', 'akuisisi', 'merger', 'penggabungan', 'penambahan modal'] },
+    { id: 'kepemilikan',label: 'Kepemilikan',        icon: 'fa-id-card',        keywords: ['kepemilikan', 'pemegang saham'] },
+    { id: 'pubex',      label: 'Public Expose',      icon: 'fa-bullhorn',       keywords: ['public expose', 'paparan publik'] },
+    { id: 'pencatatan', label: 'Pencatatan',          icon: 'fa-list-alt',       keywords: ['pencatatan', 'warrant beredar', 'peredaran unit'] },
+    { id: 'registrasi', label: 'Registrasi',          icon: 'fa-clipboard-list', keywords: ['laporan bulanan registrasi', 'registrasi pemegang'] },
+    { id: 'lainnya',    label: 'Lainnya',             icon: 'fa-ellipsis-h',     keywords: [] },
+];
+
+function categorizeDisclosure(title) {
+    const lower = (title || '').toLowerCase();
+    for (const cat of DISCLOSURE_CATEGORIES) {
+        if (cat.id === 'lainnya') continue;
+        for (const kw of cat.keywords) {
+            if (lower.includes(kw)) return cat.id;
+        }
+    }
+    return 'lainnya';
+}
+
 function formatDisclosureDate(raw) {
     if (!raw) return '-';
     try {
@@ -1917,32 +1944,77 @@ function formatDisclosureDate(raw) {
     } catch { return raw; }
 }
 
+function filterDisclosure(catId) {
+    disclosureFilter = catId;
+    document.querySelectorAll('#disclosure-filter-bar .disc-filter-btn').forEach(b => b.classList.remove('active'));
+    const activeBtn = document.querySelector(`#disclosure-filter-bar .disc-filter-btn[data-cat="${catId}"]`);
+    if (activeBtn) activeBtn.classList.add('active');
+    renderDisclosureList();
+}
+
+function renderDisclosureFilters() {
+    const bar = document.getElementById('disclosure-filter-bar');
+    if (!bar) return;
+
+    // Count per category
+    const counts = { all: cachedDisclosures.length };
+    for (const cat of DISCLOSURE_CATEGORIES) counts[cat.id] = 0;
+    for (const d of cachedDisclosures) {
+        counts[d._category] = (counts[d._category] || 0) + 1;
+    }
+
+    bar.innerHTML = `<button class="disc-filter-btn active" data-cat="all" onclick="filterDisclosure('all')">Semua (${counts.all})</button>` +
+        DISCLOSURE_CATEGORIES.filter(c => counts[c.id] > 0).map(c =>
+            `<button class="disc-filter-btn" data-cat="${c.id}" onclick="filterDisclosure('${c.id}')"><i class="fas ${c.icon}"></i> ${c.label} (${counts[c.id]})</button>`
+        ).join('');
+}
+
+function renderDisclosureList() {
+    const container = document.getElementById('disclosure-content');
+    const filtered = disclosureFilter === 'all' ? cachedDisclosures : cachedDisclosures.filter(d => d._category === disclosureFilter);
+
+    if (filtered.length === 0) {
+        container.innerHTML = '<p class="placeholder-text">Tidak ada data untuk filter ini</p>';
+        return;
+    }
+
+    container.innerHTML = filtered.map(d => {
+        const catObj = DISCLOSURE_CATEGORIES.find(c => c.id === d._category) || DISCLOSURE_CATEGORIES[DISCLOSURE_CATEGORIES.length - 1];
+        return `
+        <div class="disclosure-item">
+            <div class="disc-info">
+                <div>
+                    <span class="disc-ticker">${d.ticker || ''}</span>
+                    <span class="disc-title">${d.title || d.subject || ''}</span>
+                </div>
+                <div class="disc-date"><i class="fas fa-clock"></i> ${formatDisclosureDate(d.date)}</div>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;">
+                <span class="disc-type"><i class="fas ${catObj.icon}" style="margin-right:4px;"></i>${catObj.label}</span>
+                ${d.link ? `<a href="${d.link}" target="_blank" rel="noopener" class="disc-download" data-tippy-content="Download PDF"><i class="fas fa-file-pdf"></i></a>` : ''}
+            </div>
+        </div>`;
+    }).join('');
+}
+
 async function loadDisclosure() {
     const ticker = document.getElementById('disclosure-ticker-input').value.trim().toUpperCase();
     const container = document.getElementById('disclosure-content');
     showSkeleton('disclosure-content', 'table');
+    disclosureFilter = 'all';
     try {
         const res = await fetch(`${API}/api/disclosure?ticker=${ticker}`);
         const data = await res.json();
         if (!data.disclosures || data.disclosures.length === 0) {
+            cachedDisclosures = [];
             container.innerHTML = '<p class="placeholder-text">Tidak ada data keterbukaan informasi</p>';
+            document.getElementById('disclosure-filter-bar').innerHTML = '';
             return;
         }
-        container.innerHTML = data.disclosures.map((d, idx) => `
-            <div class="disclosure-item">
-                <div class="disc-info">
-                    <div>
-                        <span class="disc-ticker">${d.ticker || ''}</span>
-                        <span class="disc-title">${d.title || d.subject || ''}</span>
-                    </div>
-                    <div class="disc-date"><i class="fas fa-clock"></i> ${formatDisclosureDate(d.date)}</div>
-                </div>
-                <div style="display:flex;align-items:center;gap:8px;">
-                    <span class="disc-type">${d.type || 'Info'}</span>
-                    ${d.link ? `<a href="${d.link}" target="_blank" rel="noopener" class="disc-download" data-tippy-content="Download PDF"><i class="fas fa-file-pdf"></i></a>` : ''}
-                </div>
-            </div>
-        `).join('');
+        // Categorize each item
+        cachedDisclosures = data.disclosures.map(d => ({ ...d, _category: categorizeDisclosure(d.title) }));
+        renderDisclosureFilters();
+        renderDisclosureList();
     } catch (err) {
         container.innerHTML = `<p class="placeholder-text">Gagal memuat: ${err.message}</p>`;
     }

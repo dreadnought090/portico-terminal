@@ -1099,6 +1099,35 @@ body::before {
     font-weight: 600;
     letter-spacing: 0.3px;
 }
+.disc-filter-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 12px;
+}
+.disc-filter-btn {
+    padding: 5px 12px;
+    font-size: 11px;
+    font-family: 'JetBrains Mono', monospace;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--bg-secondary);
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all 0.2s;
+    white-space: nowrap;
+}
+.disc-filter-btn:hover {
+    border-color: var(--accent);
+    color: var(--text-primary);
+    background: rgba(249,115,22,0.08);
+}
+.disc-filter-btn.active {
+    background: rgba(249,115,22,0.15);
+    border-color: var(--accent);
+    color: var(--accent);
+    font-weight: 600;
+}
 .disc-download {
     display: inline-flex;
     align-items: center;

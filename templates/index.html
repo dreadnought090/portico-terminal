@@ -11,7 +11,7 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Portico">
     <link rel="apple-touch-icon" href="/static/icon-192.png">
-    <link rel="stylesheet" href="/frontend/css/terminal.css?v=20260404a">
+    <link rel="stylesheet" href="/frontend/css/terminal.css?v=20260404b">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
     <!-- Animate.css -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/animate.css/4.1.1/animate.min.css">
@@ -322,6 +322,7 @@
                     <input type="text" id="disclosure-ticker-input" placeholder="Filter per emiten (opsional, cth: BBCA)..." onkeydown="if(event.key==='Enter')loadDisclosure()" />
                     <button class="btn btn-primary" onclick="loadDisclosure()"><i class="fas fa-sync-alt"></i> Refresh</button>
                 </div>
+                <div id="disclosure-filter-bar" class="disc-filter-bar"></div>
                 <div id="disclosure-content">
                     <p class="placeholder-text">Memuat data keterbukaan informasi...</p>
                 </div>
@@ -608,7 +609,7 @@
     <!-- SheetJS for Excel export -->
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 
-    <script src="/frontend/js/app.js?v=20260404a"></script>
+    <script src="/frontend/js/app.js?v=20260404b"></script>
     <script>
         if ('serviceWorker' in navigator) {
             navigator.serviceWorker.register('/static/sw.js').catch(() => {});
