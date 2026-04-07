@@ -2478,6 +2478,16 @@ async function loadPortfolioFile(input) {
     }
 }
 
+async function clearAllData() {
+    if (!confirm('HAPUS SEMUA DATA?\n\nPortfolio, Watchlist, History — semua akan dihapus.\nPastikan sudah Save backup terlebih dahulu!')) return;
+    if (!confirm('Yakin? Tindakan ini TIDAK BISA dibatalkan.')) return;
+    try {
+        const data = await apiFetch(`${API}/api/portfolio/clear-all`, { method: 'POST' });
+        showToast(data.message, 'success', 5000);
+        loadDashboard();
+    } catch (err) { showToast('Gagal: ' + err.message, 'error'); }
+}
+
 // ── EXPORT TO EXCEL ─────────────────────────────────────────────────
 
 function exportPortfolioExcel() {

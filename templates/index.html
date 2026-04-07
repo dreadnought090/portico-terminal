@@ -204,6 +204,9 @@
                             <i class="fas fa-upload"></i> Load
                         </button>
                         <input type="file" id="load-portfolio-input" accept=".json" hidden onchange="loadPortfolioFile(this)">
+                        <button class="btn btn-danger btn-sm" onclick="clearAllData()">
+                            <i class="fas fa-trash-alt"></i> Clear All
+                        </button>
                         <button class="btn btn-primary" onclick="refreshPortfolio()">
                             <i class="fas fa-sync-alt"></i> Refresh
                         </button>
@@ -612,7 +615,7 @@
     <!-- SheetJS for Excel export -->
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 
-    <script src="/frontend/js/app.js?v=20260405b"></script>
+    <script src="/frontend/js/app.js?v=20260405c"></script>
     <script>
         if ('serviceWorker' in navigator) {
             navigator.serviceWorker.register('/static/sw.js').catch(() => {});

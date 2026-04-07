@@ -860,6 +860,17 @@ def import_portfolio(req: ImportPortfolioRequest, db: Session = Depends(get_db))
     }
 
 
+@app.post("/api/portfolio/clear-all")
+def clear_all_data(db: Session = Depends(get_db)):
+    """Delete ALL data: portfolio, watchlist, cache, and history snapshots."""
+    p = db.query(PortfolioItem).delete()
+    w = db.query(Watchlist).delete()
+    s = db.query(PortfolioSnapshot).delete()
+    c = db.query(StockCache).delete()
+    db.commit()
+    return {"message": f"Semua data dihapus: {p} portfolio, {w} watchlist, {s} snapshot, {c} cache"}
+
+
 # ── Search API ────────────────────────────────────────────────────────
 
 @app.get("/api/search")
