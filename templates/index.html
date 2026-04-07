@@ -195,10 +195,17 @@
                             <i class="fas fa-trash"></i> Hapus (<span id="portfolio-selected-count">0</span>)
                         </button>
                         <button class="btn btn-primary" onclick="exportPortfolioExcel()">
-                            <i class="fas fa-file-excel"></i> Export Excel
+                            <i class="fas fa-file-excel"></i> Excel
                         </button>
+                        <button class="btn btn-primary" onclick="savePortfolio()">
+                            <i class="fas fa-download"></i> Save
+                        </button>
+                        <button class="btn btn-ghost" onclick="document.getElementById('load-portfolio-input').click()">
+                            <i class="fas fa-upload"></i> Load
+                        </button>
+                        <input type="file" id="load-portfolio-input" accept=".json" hidden onchange="loadPortfolioFile(this)">
                         <button class="btn btn-primary" onclick="refreshPortfolio()">
-                            <i class="fas fa-sync-alt"></i> Refresh Harga
+                            <i class="fas fa-sync-alt"></i> Refresh
                         </button>
                     </div>
                 </div>
@@ -605,7 +612,7 @@
     <!-- SheetJS for Excel export -->
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 
-    <script src="/frontend/js/app.js?v=20260405a"></script>
+    <script src="/frontend/js/app.js?v=20260405b"></script>
     <script>
         if ('serviceWorker' in navigator) {
             navigator.serviceWorker.register('/static/sw.js').catch(() => {});

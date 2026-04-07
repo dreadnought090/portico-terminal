@@ -20,7 +20,7 @@ from typing import Any, Optional
 
 from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Query, Request
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
@@ -737,6 +737,127 @@ def remove_from_watchlist(ticker: str, db: Session = Depends(get_db)):
     db.delete(item)
     db.commit()
     return {"message": f"{ticker} dihapus dari watchlist"}
+
+
+# ── Save / Load Portfolio ─────────────────────────────────────────────
+
+@app.get("/api/portfolio/export")
+def export_portfolio(db: Session = Depends(get_db)):
+    """Export full portfolio + watchlist as JSON backup."""
+    import json as _json
+    items = db.query(PortfolioItem).all()
+    watchlist = db.query(Watchlist).all()
+    snapshots = db.query(PortfolioSnapshot).all()
+
+    data = {
+        "version": 1,
+        "exported_at": datetime.now(timezone.utc).isoformat(),
+        "portfolio": [
+            {
+                "ticker": i.ticker, "company_name": i.company_name,
+                "security_type": i.security_type, "sub_sector": i.sub_sector,
+                "lot": i.lot, "shares": i.shares, "avg_price": i.avg_price,
+                "total_cost": i.total_cost, "current_price": i.current_price,
+                "market_value": i.market_value, "unrealized_pnl": i.unrealized_pnl,
+                "unrealized_pnl_pct": i.unrealized_pnl_pct,
+                "broker": i.broker or "", "account_type": i.account_type or "Reguler",
+                "notes": i.notes or "",
+            }
+            for i in items
+        ],
+        "watchlist": [w.ticker for w in watchlist],
+        "snapshots": [
+            {
+                "date": s.snapshot_date.isoformat(),
+                "total_cost": s.total_cost, "total_market_value": s.total_market_value,
+                "total_pnl": s.total_pnl, "total_pnl_pct": s.total_pnl_pct,
+                "total_items": s.total_items,
+            }
+            for s in snapshots
+        ],
+    }
+    content = _json.dumps(data, indent=2, ensure_ascii=False)
+    return Response(
+        content=content,
+        media_type="application/json",
+        headers={"Content-Disposition": "attachment; filename=portico_backup.json"},
+    )
+
+
+class ImportPortfolioRequest(BaseModel):
+    data: dict
+
+
+@app.post("/api/portfolio/import")
+def import_portfolio(req: ImportPortfolioRequest, db: Session = Depends(get_db)):
+    """Import portfolio from JSON backup. Skips duplicates."""
+    data = req.data
+    if data.get("version") != 1:
+        raise HTTPException(status_code=400, detail="Format backup tidak valid")
+
+    imported = 0
+    skipped = 0
+    for item in data.get("portfolio", []):
+        ticker = item.get("ticker", "").upper()
+        if not ticker:
+            continue
+        broker = item.get("broker", "")
+        account_type = item.get("account_type", "Reguler")
+        existing = db.query(PortfolioItem).filter_by(
+            ticker=ticker, broker=broker, account_type=account_type
+        ).first()
+        if existing:
+            skipped += 1
+            continue
+        db.add(PortfolioItem(
+            ticker=ticker,
+            company_name=item.get("company_name", ticker),
+            security_type=item.get("security_type", "Saham"),
+            sub_sector=item.get("sub_sector", "Other"),
+            lot=item.get("lot", 0),
+            shares=item.get("shares", 0),
+            avg_price=item.get("avg_price", 0),
+            total_cost=item.get("total_cost", 0),
+            current_price=item.get("current_price", 0),
+            market_value=item.get("market_value", 0),
+            unrealized_pnl=item.get("unrealized_pnl", 0),
+            unrealized_pnl_pct=item.get("unrealized_pnl_pct", 0),
+            broker=broker,
+            account_type=account_type,
+            notes=item.get("notes", ""),
+        ))
+        imported += 1
+
+    # Import watchlist
+    wl_imported = 0
+    for ticker in data.get("watchlist", []):
+        ticker = ticker.upper()
+        if not db.query(Watchlist).filter_by(ticker=ticker).first():
+            db.add(Watchlist(ticker=ticker))
+            wl_imported += 1
+
+    # Import snapshots
+    snap_imported = 0
+    for s in data.get("snapshots", []):
+        from datetime import date as _date
+        snap_date = _date.fromisoformat(s["date"])
+        if not db.query(PortfolioSnapshot).filter_by(snapshot_date=snap_date).first():
+            db.add(PortfolioSnapshot(
+                snapshot_date=snap_date,
+                total_cost=s.get("total_cost", 0),
+                total_market_value=s.get("total_market_value", 0),
+                total_pnl=s.get("total_pnl", 0),
+                total_pnl_pct=s.get("total_pnl_pct", 0),
+                total_items=s.get("total_items", 0),
+            ))
+            snap_imported += 1
+
+    db.commit()
+    return {
+        "message": f"{imported} saham diimport, {skipped} duplikat diskip, {wl_imported} watchlist, {snap_imported} snapshot",
+        "imported": imported, "skipped": skipped,
+        "watchlist_imported": wl_imported, "snapshots_imported": snap_imported,
+    }
 
 
 # ── Search API ────────────────────────────────────────────────────────

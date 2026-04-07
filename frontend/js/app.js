@@ -2440,6 +2440,44 @@ async function importPasteResults() {
     }
 }
 
+// ── SAVE / LOAD PORTFOLIO (JSON BACKUP) ─────────────────────────────
+
+function savePortfolio() {
+    showToast('Mengunduh backup...', 'info', 2000);
+    window.location.href = `${API}/api/portfolio/export`;
+}
+
+async function loadPortfolioFile(input) {
+    const file = input.files[0];
+    if (!file) return;
+    input.value = '';
+
+    try {
+        const text = await file.text();
+        const data = JSON.parse(text);
+
+        if (data.version !== 1) {
+            showToast('Format file tidak valid', 'error');
+            return;
+        }
+
+        const count = (data.portfolio || []).length;
+        const wl = (data.watchlist || []).length;
+        const snaps = (data.snapshots || []).length;
+        if (!confirm(`Import backup?\n- ${count} saham\n- ${wl} watchlist\n- ${snaps} snapshot history\n\nDuplikat akan otomatis diskip.`)) return;
+
+        const res = await apiFetch(`${API}/api/portfolio/import`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ data })
+        });
+        showToast(res.message, 'success', 6000);
+        loadDashboard();
+    } catch (err) {
+        showToast('Gagal import: ' + err.message, 'error');
+    }
+}
+
 // ── EXPORT TO EXCEL ─────────────────────────────────────────────────
 
 function exportPortfolioExcel() {
