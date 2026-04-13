@@ -148,7 +148,7 @@ app = FastAPI(title="Portico", version="1.0.0", lifespan=lifespan)
 
 AUTH_PASSWORD = os.environ.get("AUTH_PASSWORD", "")
 
-BASE_DIR = os.path.dirname(__file__)
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 app.mount("/static", StaticFiles(directory=os.path.join(BASE_DIR, "static")), name="static")
 app.mount("/frontend", StaticFiles(directory=os.path.join(BASE_DIR, "frontend")), name="frontend")
 templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
