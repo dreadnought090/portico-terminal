@@ -180,11 +180,36 @@ class AuthMiddleware(BaseHTTPMiddleware):
 app.add_middleware(AuthMiddleware)
 
 
+def _login_html(error=""):
+    err_block = f'<div class="error">{error}</div>' if error else ''
+    return HTMLResponse(f"""<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Portico Terminal - Login</title>
+<style>
+*{{margin:0;padding:0;box-sizing:border-box}}
+body{{min-height:100vh;display:flex;align-items:center;justify-content:center;background:#0a0e17;color:#e2e8f0;font-family:'JetBrains Mono','Fira Code',monospace}}
+.box{{background:#111827;border:1px solid #1e293b;border-radius:12px;padding:40px;width:380px;text-align:center}}
+.logo{{font-size:28px;font-weight:800;margin-bottom:8px}}.accent{{color:#f97316}}
+.sub{{color:#64748b;font-size:13px;margin-bottom:32px}}
+input{{width:100%;padding:12px 16px;background:#1e293b;border:1px solid #334155;border-radius:8px;color:#e2e8f0;font-size:14px;font-family:inherit;outline:none;margin-bottom:16px}}
+input:focus{{border-color:#f97316}}
+button{{width:100%;padding:12px;background:linear-gradient(135deg,#f97316,#ea580c);border:none;border-radius:8px;color:#fff;font-size:14px;font-weight:600;font-family:inherit;cursor:pointer}}
+button:hover{{opacity:.9}}.error{{color:#ef4444;font-size:13px;margin-bottom:16px}}
+</style></head><body>
+<form class="box" method="POST" action="/login">
+<div class="logo"><span class="accent">PORTICO</span> Terminal</div>
+<div class="sub">Enter password to continue</div>
+{err_block}
+<input type="password" name="password" placeholder="Password" autofocus required>
+<button type="submit">Login</button>
+</form></body></html>""")
+
+
 @app.get("/login")
 async def login_page(request: Request):
     if not AUTH_PASSWORD:
         return Response(status_code=303, headers={"Location": "/"})
-    return templates.TemplateResponse("login.html", {"request": request, "error": ""})
+    return _login_html()
 
 
 @app.post("/login")
@@ -196,7 +221,7 @@ async def login(request: Request):
         response = Response(status_code=303, headers={"Location": "/"})
         response.set_cookie("portico_auth", token, httponly=True, max_age=30*86400, samesite="lax")
         return response
-    return templates.TemplateResponse("login.html", {"request": request, "error": "Password salah"})
+    return _login_html("Password salah")
 
 
 # ── Pydantic Schemas ──────────────────────────────────────────────────
