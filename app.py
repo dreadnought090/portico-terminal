@@ -18,7 +18,7 @@ if os.path.isfile(_env_path):
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Query, Request
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, Query, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.templating import Jinja2Templates
@@ -26,7 +26,9 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from contextlib import asynccontextmanager
 
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
+USE_SCHEDULER = os.environ.get("USE_SCHEDULER", "1") == "1"
+if USE_SCHEDULER:
+    from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from backend.database import get_db, init_db
 from backend.models import PortfolioItem, StockCache, NewsItem, Watchlist, SecurityType, SubSector, PortfolioSnapshot
@@ -34,11 +36,11 @@ from backend.stock_service import (
     fetch_stock_data, fetch_stock_history, fetch_news_for_ticker,
     fetch_idx_disclosure, fetch_market_summary, IDX_SECTORS,
     fetch_corporate_profile, fetch_ownership_data, fetch_financials,
-    fetch_financial_statements
+    fetch_financial_statements, search_reksadana, get_reksadana_nav
 )
-from backend.ocr_service import extract_stocks_from_image
+from backend.ocr_service import extract_stocks_from_image, clean_ocr_ticker
 
-scheduler = AsyncIOScheduler()
+scheduler = AsyncIOScheduler() if USE_SCHEDULER else None
 
 
 def _update_item_price(item: PortfolioItem, data: dict, db: Session = None):
@@ -69,6 +71,15 @@ async def update_all_portfolio_prices():
         items = db.query(PortfolioItem).all()
         for item in items:
             try:
+                if item.security_type and item.security_type.lower() == "reksadana":
+                    nav = get_reksadana_nav(item.company_name or item.ticker)
+                    if nav:
+                        item.current_price = nav["nav_value"]
+                        item.market_value = item.shares * nav["nav_value"]
+                        item.unrealized_pnl = item.market_value - item.total_cost
+                        item.unrealized_pnl_pct = (item.unrealized_pnl / item.total_cost * 100) if item.total_cost else 0
+                        item.last_updated = datetime.now(timezone.utc)
+                    continue
                 data = fetch_stock_data(item.ticker)
                 if "error" not in data:
                     _update_item_price(item, data, db)
@@ -123,21 +134,69 @@ def take_portfolio_snapshot(db: Session = None):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
-    scheduler.add_job(update_all_portfolio_prices, "interval", minutes=15, id="price_update")
-    scheduler.add_job(take_portfolio_snapshot, "cron", hour=16, minute=5, id="daily_snapshot")
-    scheduler.start()
-    # Take snapshot on startup if portfolio has data
+    if scheduler:
+        scheduler.add_job(update_all_portfolio_prices, "interval", minutes=15, id="price_update")
+        scheduler.add_job(take_portfolio_snapshot, "cron", hour=16, minute=5, id="daily_snapshot")
+        scheduler.start()
     take_portfolio_snapshot()
     yield
-    scheduler.shutdown()
+    if scheduler:
+        scheduler.shutdown()
 
 
 app = FastAPI(title="Portico", version="1.0.0", lifespan=lifespan)
+
+AUTH_PASSWORD = os.environ.get("AUTH_PASSWORD", "")
 
 BASE_DIR = os.path.dirname(__file__)
 app.mount("/static", StaticFiles(directory=os.path.join(BASE_DIR, "static")), name="static")
 app.mount("/frontend", StaticFiles(directory=os.path.join(BASE_DIR, "frontend")), name="frontend")
 templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
+
+
+# ── Auth Middleware ──────────────────────────────────────────────────
+
+from starlette.middleware.base import BaseHTTPMiddleware
+import hashlib
+
+
+class AuthMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        if not AUTH_PASSWORD:
+            return await call_next(request)
+        path = request.url.path
+        if path.startswith(("/static/", "/frontend/", "/login")):
+            return await call_next(request)
+        token = request.cookies.get("portico_auth", "")
+        expected = hashlib.sha256(AUTH_PASSWORD.encode()).hexdigest()
+        if token == expected:
+            return await call_next(request)
+        if path.startswith("/api/"):
+            return JSONResponse({"error": "Unauthorized"}, status_code=401)
+        from starlette.responses import RedirectResponse
+        return RedirectResponse("/login", status_code=303)
+
+
+app.add_middleware(AuthMiddleware)
+
+
+@app.get("/login")
+async def login_page(request: Request):
+    if not AUTH_PASSWORD:
+        return Response(status_code=303, headers={"Location": "/"})
+    return templates.TemplateResponse("login.html", {"request": request, "error": ""})
+
+
+@app.post("/login")
+async def login(request: Request):
+    form = await request.form()
+    password = form.get("password", "")
+    if password == AUTH_PASSWORD:
+        token = hashlib.sha256(AUTH_PASSWORD.encode()).hexdigest()
+        response = Response(status_code=303, headers={"Location": "/"})
+        response.set_cookie("portico_auth", token, httponly=True, max_age=30*86400, samesite="lax")
+        return response
+    return templates.TemplateResponse("login.html", {"request": request, "error": "Password salah"})
 
 
 # ── Pydantic Schemas ──────────────────────────────────────────────────
@@ -243,6 +302,31 @@ async def get_disclosure(ticker: str = "", page: int = 0):
 def get_portfolio(db: Session = Depends(get_db)):
     """Get all portfolio items with classification."""
     items = db.query(PortfolioItem).all()
+
+    # On-demand price refresh when scheduler is off (Render free tier)
+    if not scheduler and items:
+        from datetime import timedelta
+        stale_threshold = datetime.now(timezone.utc) - timedelta(minutes=15)
+        stale = [i for i in items if not i.last_updated or i.last_updated < stale_threshold]
+        if stale:
+            for item in stale:
+                try:
+                    if item.security_type and item.security_type.lower() == "reksadana":
+                        nav = get_reksadana_nav(item.company_name or item.ticker)
+                        if nav:
+                            item.current_price = nav["nav_value"]
+                            item.market_value = item.shares * nav["nav_value"]
+                            item.unrealized_pnl = item.market_value - item.total_cost
+                            item.unrealized_pnl_pct = (item.unrealized_pnl / item.total_cost * 100) if item.total_cost else 0
+                            item.last_updated = datetime.now(timezone.utc)
+                        continue
+                    data = fetch_stock_data(item.ticker)
+                    if "error" not in data:
+                        _update_item_price(item, data, db)
+                except Exception:
+                    continue
+            db.commit()
+            take_portfolio_snapshot(db)
     portfolio = []
     total_cost = 0
     total_market_value = 0
@@ -379,15 +463,29 @@ async def add_to_portfolio(req: AddStockRequest, db: Session = Depends(get_db)):
         lot = req.lot if req.lot > 0 else (req.shares // 100 if req.shares > 0 else 0)
         total_cost = shares * req.avg_price
         market_value = shares * current_price
+    elif asset_type == "reksadana":
+        company_name = req.company_name or ticker
+        sector = "Reksadana"
+        shares = req.shares if req.shares > 0 else max(req.lot, 1)
+        lot = req.lot if req.lot > 0 else 1
+        total_cost = req.total_cost if req.total_cost > 0 else shares * req.avg_price
+        # Try to fetch live NAV from Bareksa
+        nav = get_reksadana_nav(company_name)
+        if nav:
+            current_price = nav["nav_value"]
+            market_value = shares * current_price
+        else:
+            current_price = req.avg_price
+            market_value = total_cost
     else:
-        # Obligasi, Reksadana, Lainnya — no live price
+        # Obligasi, Lainnya — no live price
         current_price = req.avg_price
         company_name = req.company_name or ticker
         sector = req.security_type
         shares = req.shares if req.shares > 0 else max(req.lot, 1)
         lot = req.lot if req.lot > 0 else 1
         total_cost = req.total_cost if req.total_cost > 0 else shares * req.avg_price
-        market_value = total_cost  # no live pricing
+        market_value = total_cost
 
     pnl = market_value - total_cost
     pnl_pct = (pnl / total_cost * 100) if total_cost else 0
@@ -573,16 +671,37 @@ def get_portfolio_history(period: str = "all", db: Session = Depends(get_db)):
     }
 
 
+# ── Reksadana NAV API ────────────────────────────────────────────────
+
+@app.get("/api/reksadana/search")
+def api_search_reksadana(q: str = Query(..., min_length=2)):
+    """Search mutual funds by name/code."""
+    return search_reksadana(q)
+
+
+@app.get("/api/reksadana/nav")
+def api_get_nav(name: str = Query(...)):
+    """Get latest NAV for a specific mutual fund."""
+    result = get_reksadana_nav(name)
+    if not result:
+        raise HTTPException(404, "Reksadana tidak ditemukan")
+    return result
+
+
 # ── Screenshot OCR API ────────────────────────────────────────────────
 
 @app.post("/api/ocr/screenshot")
-async def process_screenshot(file: UploadFile = File(...)):
+async def process_screenshot(
+    file: UploadFile = File(...),
+    context: str = Form(""),
+    known_tickers: str = Form(""),
+):
     """Process a screenshot to extract stock data."""
     if not file.content_type or not file.content_type.startswith("image/"):
         raise HTTPException(status_code=400, detail="File harus berupa gambar")
 
     contents = await file.read()
-    result = extract_stocks_from_image(contents)
+    result = extract_stocks_from_image(contents, context=context, known_tickers=known_tickers)
     return result
 
 
@@ -598,7 +717,7 @@ async def import_from_ocr(req: OcrImportRequest, db: Session = Depends(get_db)):
     imported = []
     skipped = []
     for stock in req.stocks:
-        ticker = stock.get("ticker", "").upper()
+        ticker = clean_ocr_ticker(stock.get("ticker", ""))
         if not ticker:
             continue
 

@@ -2,10 +2,19 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, DeclarativeBase
 import os
 
-DB_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "mybloomberg.db")
-os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+DATABASE_URL = os.environ.get("DATABASE_URL", "")
 
-engine = create_engine(f"sqlite:///{DB_PATH}", echo=False)
+if DATABASE_URL:
+    # Railway/PostgreSQL — fix legacy "postgres://" scheme
+    if DATABASE_URL.startswith("postgres://"):
+        DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+    engine = create_engine(DATABASE_URL, echo=False, pool_pre_ping=True)
+else:
+    # Local development — SQLite
+    DB_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "mybloomberg.db")
+    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+    engine = create_engine(f"sqlite:///{DB_PATH}", echo=False)
+
 SessionLocal = sessionmaker(bind=engine)
 
 

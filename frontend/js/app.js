@@ -179,6 +179,79 @@ document.addEventListener('DOMContentLoaded', () => {
         if (e.target.files.length > 0) processScreenshot(e.target.files[0]);
     });
 
+    // Ctrl+V paste screenshot from clipboard (Windows+Shift+S)
+    document.addEventListener('paste', (e) => {
+        const panel = document.getElementById('panel-screenshot');
+        if (!panel || !panel.classList.contains('active')) return;
+        const items = e.clipboardData?.items;
+        if (!items) return;
+        for (const item of items) {
+            if (item.type.startsWith('image/')) {
+                e.preventDefault();
+                const file = item.getAsFile();
+                if (file) processScreenshot(file);
+                return;
+            }
+        }
+    });
+
+    // Reksadana autocomplete
+    const rdInput = document.getElementById('add-rd-name');
+    const rdSuggestions = document.getElementById('rd-suggestions');
+    let rdDebounce = null;
+    let rdActiveIdx = -1;
+
+    rdInput.addEventListener('input', () => {
+        clearTimeout(rdDebounce);
+        const q = rdInput.value.trim();
+        if (q.length < 2) { rdSuggestions.classList.add('hidden'); return; }
+        rdDebounce = setTimeout(async () => {
+            try {
+                const res = await fetch(`${API}/api/reksadana/search?q=${encodeURIComponent(q)}`);
+                const data = await res.json();
+                rdActiveIdx = -1;
+                if (!data.length) { rdSuggestions.classList.add('hidden'); return; }
+                rdSuggestions.innerHTML = data.slice(0, 50).map((d, i) => `
+                    <div class="rd-item" data-idx="${i}" data-name="${d.name}" data-nav="${d.nav_value}" data-code="${d.code}">
+                        <span class="rd-item-name">${d.name}</span>
+                        <span class="rd-item-meta">
+                            <span>${d.type}</span>
+                            <span class="rd-item-nav">NAV: Rp ${d.nav_value.toLocaleString('id-ID', {minimumFractionDigits:2})}</span>
+                            <span>${d.nav_date}</span>
+                            <span>${d.im || ''}</span>
+                        </span>
+                    </div>
+                `).join('');
+                rdSuggestions.classList.remove('hidden');
+            } catch {}
+        }, 300);
+    });
+
+    rdSuggestions.addEventListener('click', (e) => {
+        const item = e.target.closest('.rd-item');
+        if (!item) return;
+        rdInput.value = item.dataset.name;
+        const navInput = document.getElementById('add-rd-nav');
+        if (navInput) navInput.value = item.dataset.nav;
+        rdSuggestions.classList.add('hidden');
+    });
+
+    rdInput.addEventListener('keydown', (e) => {
+        const items = rdSuggestions.querySelectorAll('.rd-item');
+        if (!items.length || rdSuggestions.classList.contains('hidden')) return;
+        if (e.key === 'ArrowDown') { e.preventDefault(); rdActiveIdx = Math.min(rdActiveIdx + 1, items.length - 1); }
+        else if (e.key === 'ArrowUp') { e.preventDefault(); rdActiveIdx = Math.max(rdActiveIdx - 1, 0); }
+        else if (e.key === 'Enter' && rdActiveIdx >= 0) { e.preventDefault(); items[rdActiveIdx].click(); return; }
+        else if (e.key === 'Escape') { rdSuggestions.classList.add('hidden'); return; }
+        else return;
+        items.forEach((it, i) => it.classList.toggle('active', i === rdActiveIdx));
+        items[rdActiveIdx]?.scrollIntoView({ block: 'nearest' });
+    });
+
+    document.addEventListener('click', (e) => {
+        if (!e.target.closest('.asset-reksadana')) rdSuggestions.classList.add('hidden');
+    });
+
     // Infinite scroll for disclosure + news
     document.querySelector('.content').addEventListener('scroll', (e) => {
         const el = e.target;
@@ -2100,6 +2173,11 @@ async function processScreenshot(file) {
 
     const formData = new FormData();
     formData.append('file', file);
+    // Send user context + existing tickers for better accuracy
+    const userContext = document.getElementById('ocr-context')?.value?.trim() || '';
+    if (userContext) formData.append('context', userContext);
+    const knownTickers = portfolioData.map(p => p.ticker).filter(Boolean);
+    if (knownTickers.length) formData.append('known_tickers', knownTickers.join(','));
     try {
         const res = await fetch(`${API}/api/ocr/screenshot`, { method: 'POST', body: formData });
         const data = await res.json();
@@ -2124,7 +2202,7 @@ async function processScreenshot(file) {
         resultsEl.innerHTML = ocrResults.map((s, i) => `
             <div class="ocr-stock-item">
                 <input type="checkbox" id="ocr-check-${i}" checked>
-                <span class="ocr-ticker">${s.ticker}</span>
+                <input type="text" value="${s.ticker}" onchange="ocrResults[${i}].ticker=this.value.toUpperCase().trim();this.value=ocrResults[${i}].ticker" style="width:70px;background:var(--bg-input);border:1px solid var(--border);color:var(--accent);padding:4px 8px;border-radius:6px;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:bold;text-transform:uppercase;">
                 <span>Lot: <input type="number" value="${s.lot}" onchange="ocrResults[${i}].lot=parseInt(this.value)" style="width:60px;background:var(--bg-input);border:1px solid var(--border);color:var(--text-primary);padding:4px 8px;border-radius:6px;font-family:'JetBrains Mono',monospace;font-size:12px;"></span>
                 <span>Avg: <input type="number" value="${s.avg_price}" onchange="ocrResults[${i}].avg_price=parseFloat(this.value)" style="width:100px;background:var(--bg-input);border:1px solid var(--border);color:var(--text-primary);padding:4px 8px;border-radius:6px;font-family:'JetBrains Mono',monospace;font-size:12px;"></span>
                 <span style="color:var(--text-muted);font-size:11px;">${s.raw_line || ''}</span>
@@ -2136,6 +2214,17 @@ async function processScreenshot(file) {
         statusEl.textContent = 'Error: ' + err.message;
         statusEl.className = 'result-message error';
     }
+}
+
+function clearOcrResults() {
+    ocrResults = [];
+    document.getElementById('ocr-preview').classList.add('hidden');
+    document.getElementById('ocr-results').innerHTML = '';
+    const fileInput = document.getElementById('screenshot-input');
+    if (fileInput) fileInput.value = '';
+    const ocrStatus = document.getElementById('ocr-status');
+    if (ocrStatus) ocrStatus.textContent = '';
+    showToast('Hasil OCR dihapus', 'info');
 }
 
 async function importOcrResults() {

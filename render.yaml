@@ -1,0 +1,26 @@
+databases:
+  - name: portico-db
+    plan: free
+    databaseName: portico
+    user: portico
+
+services:
+  - type: web
+    name: portico-terminal
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: portico-db
+          property: connectionURI
+      - key: USE_SCHEDULER
+        value: "0"
+      - key: AUTH_PASSWORD
+        sync: false
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: PYTHON_VERSION
+        value: "3.12.0"

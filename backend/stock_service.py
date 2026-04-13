@@ -195,6 +195,82 @@ def fetch_stock_data(ticker: str) -> dict:
         return {"error": str(e), "ticker": clean_ticker}
 
 
+# ── Reksadana NAV from Bareksa ──────────────────────────────────────
+
+_nav_cache = {"data": None, "ts": 0}
+_NAV_CACHE_TTL = 3600  # 1 hour
+
+
+def fetch_bareksa_nav() -> list:
+    """Fetch all mutual fund NAV data from Bareksa (cached 1hr)."""
+    import time, json as _json, requests as _req
+    now = time.time()
+    if _nav_cache["data"] and (now - _nav_cache["ts"]) < _NAV_CACHE_TTL:
+        return _nav_cache["data"]
+
+    try:
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+        r = _req.get("https://www.bareksa.com/id/data/reksadana/daftar?trans=1", headers=headers, timeout=15)
+        match = re.search(r"var data = '(\[.*?\])'", r.text, re.DOTALL)
+        if not match:
+            return []
+        data = _json.loads(match.group(1))
+        _nav_cache["data"] = data
+        _nav_cache["ts"] = now
+        return data
+    except Exception:
+        return _nav_cache["data"] or []
+
+
+def search_reksadana(query: str) -> list:
+    """Search mutual funds by name. Returns list of {name, code, nav, nav_date, type}."""
+    data = fetch_bareksa_nav()
+    q = query.lower()
+    results = []
+    for d in data:
+        name = d.get("name", "")
+        code = d.get("code", "")
+        if q in name.lower() or q in code.lower():
+            nav = d.get("nav", {})
+            results.append({
+                "name": name,
+                "code": code,
+                "nav_value": float(nav.get("value", 0)),
+                "nav_date": nav.get("date", ""),
+                "type": d.get("ptype_name", ""),
+                "im": d.get("im", {}).get("name", ""),
+            })
+    return results
+
+
+def get_reksadana_nav(name: str) -> dict | None:
+    """Get NAV for a specific mutual fund by exact or partial name match."""
+    data = fetch_bareksa_nav()
+    q = name.lower()
+    # Try exact match first, then partial
+    for d in data:
+        if d.get("name", "").lower() == q or d.get("code", "").lower() == q:
+            nav = d.get("nav", {})
+            return {
+                "name": d["name"],
+                "code": d.get("code", ""),
+                "nav_value": float(nav.get("value", 0)),
+                "nav_date": nav.get("date", ""),
+                "type": d.get("ptype_name", ""),
+            }
+    for d in data:
+        if q in d.get("name", "").lower():
+            nav = d.get("nav", {})
+            return {
+                "name": d["name"],
+                "code": d.get("code", ""),
+                "nav_value": float(nav.get("value", 0)),
+                "nav_date": nav.get("date", ""),
+                "type": d.get("ptype_name", ""),
+            }
+    return None
+
+
 def fetch_stock_history(ticker: str, period: str = "1mo") -> list:
     """Fetch historical price data."""
     yf_ticker = get_idx_ticker(ticker)

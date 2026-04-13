@@ -1,11 +1,12 @@
 fastapi
 uvicorn
 sqlalchemy
+psycopg2-binary
 yfinance
 aiohttp
 beautifulsoup4
 Pillow
-groq
+anthropic
 python-multipart
 feedparser
 apscheduler
@@ -13,3 +14,4 @@ httpx
 jinja2
 pydantic
 curl_cffi
+requests
