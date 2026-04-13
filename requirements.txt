@@ -1,5 +1,5 @@
 fastapi
-uvicorn
+uvicorn[standard]
 sqlalchemy
 psycopg2-binary
 yfinance
@@ -13,5 +13,4 @@ apscheduler
 httpx
 jinja2
 pydantic
-curl_cffi
 requests
