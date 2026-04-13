@@ -52,13 +52,13 @@ def _prepare_image(image_bytes: bytes) -> str:
         image = image.convert("RGB")
 
     max_dim = max(image.size)
-    if max_dim > 1500:
-        ratio = 1500 / max_dim
+    if max_dim > 1024:
+        ratio = 1024 / max_dim
         new_size = (int(image.size[0] * ratio), int(image.size[1] * ratio))
         image = image.resize(new_size, Image.LANCZOS)
 
     buf = io.BytesIO()
-    image.save(buf, format="PNG")
+    image.save(buf, format="JPEG", quality=85)
     return base64.b64encode(buf.getvalue()).decode("utf-8")
 
 
@@ -124,7 +124,7 @@ def extract_stocks_from_image(image_bytes: bytes, context: str = "", known_ticke
                             "type": "image",
                             "source": {
                                 "type": "base64",
-                                "media_type": "image/png",
+                                "media_type": "image/jpeg",
                                 "data": img_b64,
                             },
                         },

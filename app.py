@@ -924,7 +924,7 @@ def export_portfolio(db: Session = Depends(get_db)):
     return Response(
         content=content,
         media_type="application/json",
-        headers={"Content-Disposition": "attachment; filename=portico_backup.json"},
+        headers={"Content-Disposition": f"attachment; filename=portico_backup_{datetime.now().strftime('%Y%m%d')}.json"},
     )
 
 

@@ -1959,7 +1959,7 @@ async function loadNews(loadMore = false) {
     }
 
     if (!ticker) {
-        if (portfolioData && portfolioData.items.length > 0) {
+        if (portfolioData && portfolioData.items && portfolioData.items.length > 0) {
             await fetchMoreNewsTickers();
             if (cachedNews.length === 0) {
                 container.innerHTML = '<p class="placeholder-text">Tidak ada berita ditemukan untuk saham di portfolio</p>';
@@ -1968,7 +1968,7 @@ async function loadNews(loadMore = false) {
             newsDisplayed = Math.min(NEWS_PAGE_SIZE, dedupeNews(cachedNews).length);
             renderNewsPage();
         } else {
-            container.innerHTML = '<p class="placeholder-text">Masukkan ticker atau tambah saham ke portfolio terlebih dahulu</p>';
+            container.innerHTML = '<p class="placeholder-text">Ketik kode saham di filter (misal: BBCA) lalu klik Cari</p>';
         }
         return;
     }
@@ -2176,7 +2176,7 @@ async function processScreenshot(file) {
     // Send user context + existing tickers for better accuracy
     const userContext = document.getElementById('ocr-context')?.value?.trim() || '';
     if (userContext) formData.append('context', userContext);
-    const knownTickers = portfolioData.map(p => p.ticker).filter(Boolean);
+    const knownTickers = (portfolioData?.items || []).map(p => p.ticker).filter(Boolean);
     if (knownTickers.length) formData.append('known_tickers', knownTickers.join(','));
     try {
         const res = await fetch(`${API}/api/ocr/screenshot`, { method: 'POST', body: formData });
