@@ -15,7 +15,7 @@ services:
       - key: DATABASE_URL
         fromDatabase:
           name: portico-db
-          property: connectionURI
+          property: connectionString
       - key: USE_SCHEDULER
         value: "0"
       - key: AUTH_PASSWORD
