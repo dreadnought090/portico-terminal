@@ -12,6 +12,7 @@
     <meta name="apple-mobile-web-app-title" content="Portico">
     <link rel="apple-touch-icon" href="/static/icon-192.png">
     <link rel="stylesheet" href="/frontend/css/terminal.css?v=20260411a">
+    <link rel="stylesheet" href="/frontend/css/analysis.css?v=20260420a">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
     <!-- Animate.css -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/animate.css/4.1.1/animate.min.css">
@@ -39,6 +40,9 @@
         </div>
         <div class="top-bar-right">
             <span class="clock" id="clock"></span>
+            <button class="analysis-toggle-btn" data-tippy-content="Analysis Mode (Ctrl+Shift+A)">
+                <i class="fa fa-brain"></i> Analysis
+            </button>
             <button class="btn-icon" onclick="refreshPortfolio()" data-tippy-content="Refresh Data">
                 <i class="fas fa-sync-alt"></i>
             </button>
@@ -185,6 +189,9 @@
                 <div class="panel-header">
                     <h2><i class="fas fa-briefcase"></i> Portfolio Management</h2>
                     <div class="panel-actions">
+                        <select id="portfolio-select-broker" onchange="selectByBroker(this.value)" style="padding:4px 8px;border-radius:6px;background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border);font-size:11px;">
+                            <option value="">Select per Sekuritas...</option>
+                        </select>
                         <select id="portfolio-bulk-broker" class="hidden" style="padding:4px 8px;border-radius:6px;background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border);font-size:11px;">
                             <option value="">Pindah Broker...</option>
                         </select>
@@ -622,7 +629,10 @@
     <!-- SheetJS for Excel export -->
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 
-    <script src="/frontend/js/app.js?v=20260413b"></script>
+    {% include 'partials/analysis_panel.html' %}
+
+    <script src="/frontend/js/app.js?v=20260413c"></script>
+    <script src="/frontend/js/analysis.js?v=20260420a"></script>
     <script>
         if ('serviceWorker' in navigator) {
             navigator.serviceWorker.register('/static/sw.js').catch(() => {});

@@ -1,6 +1,7 @@
 """Portico - Indonesian Stock Terminal Application."""
 import os
 import sys
+import json
 import asyncio
 import logging
 
@@ -31,7 +32,7 @@ if USE_SCHEDULER:
     from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from backend.database import get_db, init_db
-from backend.models import PortfolioItem, StockCache, NewsItem, Watchlist, SecurityType, SubSector, PortfolioSnapshot
+from backend.models import PortfolioItem, StockCache, NewsItem, Watchlist, SecurityType, SubSector, PortfolioSnapshot, AnalysisRun, ThesisMemo
 from backend.stock_service import (
     fetch_stock_data, fetch_stock_history, fetch_news_for_ticker,
     fetch_idx_disclosure, fetch_market_summary, IDX_SECTORS,
@@ -39,6 +40,7 @@ from backend.stock_service import (
     fetch_financial_statements, search_reksadana, get_reksadana_nav
 )
 from backend.ocr_service import extract_stocks_from_image, clean_ocr_ticker
+from backend.analysis.council import run_council, estimate_council_cost
 
 scheduler = AsyncIOScheduler() if USE_SCHEDULER else None
 
@@ -1025,6 +1027,185 @@ async def search_stock(q: str = Query(..., min_length=1)):
     if "error" in data and "last_price" not in data:
         return {"results": [], "query": q}
     return {"results": [data], "query": q}
+
+
+# ── Analysis Mode API ─────────────────────────────────────────────────
+
+class CouncilRequest(BaseModel):
+    thesis: str
+    roles_enabled: Optional[list] = None
+
+
+@app.post("/api/analysis/council/{ticker}/estimate")
+def estimate_council(ticker: str, body: CouncilRequest):
+    """Rough cost estimate before running council (show to user for approval)."""
+    thesis_len = len(body.thesis or "")
+    estimate = estimate_council_cost(thesis_length_chars=max(thesis_len, 500))
+    return {"ticker": ticker.upper(), **estimate}
+
+
+@app.post("/api/analysis/council/{ticker}")
+async def api_run_council(ticker: str, body: CouncilRequest, db: Session = Depends(get_db)):
+    """Run council stress-test on thesis. Saves AnalysisRun record."""
+    ticker = ticker.upper().strip()
+    result = await run_council(ticker, body.thesis, body.roles_enabled)
+
+    # Persist run
+    status = "completed" if not result.get("error") else ("partial" if result.get("synthesis") else "failed")
+    synthesis_text = ""
+    if result.get("synthesis") and isinstance(result["synthesis"], dict):
+        synthesis_text = result["synthesis"].get("output", "")
+
+    run = AnalysisRun(
+        ticker=ticker,
+        run_type="council",
+        input_thesis=body.thesis,
+        output_json=json.dumps(result, default=str),
+        synthesis_text=synthesis_text,
+        prompt_version=result.get("prompt_version", ""),
+        total_tokens_input=result.get("total_input_tokens", 0),
+        total_tokens_output=result.get("total_output_tokens", 0),
+        total_cost_usd=result.get("total_cost_usd", 0.0),
+        duration_ms=result.get("total_duration_ms", 0),
+        status=status,
+        error_message=result.get("error", "") or "",
+    )
+    db.add(run)
+    db.commit()
+    db.refresh(run)
+
+    return {"run_id": run.id, **result}
+
+
+@app.get("/api/analysis/history/{ticker}")
+def analysis_history(ticker: str, limit: int = 20, db: Session = Depends(get_db)):
+    """List past analysis runs for a ticker."""
+    ticker = ticker.upper().strip()
+    runs = (
+        db.query(AnalysisRun)
+        .filter(AnalysisRun.ticker == ticker)
+        .order_by(AnalysisRun.created_at.desc())
+        .limit(limit)
+        .all()
+    )
+    return {
+        "ticker": ticker,
+        "runs": [
+            {
+                "id": r.id,
+                "run_type": r.run_type,
+                "status": r.status,
+                "synthesis_preview": (r.synthesis_text[:500] + "...") if len(r.synthesis_text) > 500 else r.synthesis_text,
+                "cost_usd": r.total_cost_usd,
+                "duration_ms": r.duration_ms,
+                "prompt_version": r.prompt_version,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+            }
+            for r in runs
+        ],
+    }
+
+
+@app.get("/api/analysis/run/{run_id}")
+def analysis_run_detail(run_id: int, db: Session = Depends(get_db)):
+    """Get full detail of one analysis run."""
+    run = db.query(AnalysisRun).filter(AnalysisRun.id == run_id).first()
+    if not run:
+        raise HTTPException(404, "Run not found")
+    try:
+        output = json.loads(run.output_json or "{}")
+    except json.JSONDecodeError:
+        output = {"error": "failed to parse output_json"}
+    return {
+        "id": run.id,
+        "ticker": run.ticker,
+        "run_type": run.run_type,
+        "status": run.status,
+        "input_thesis": run.input_thesis,
+        "output": output,
+        "synthesis_text": run.synthesis_text,
+        "prompt_version": run.prompt_version,
+        "total_cost_usd": run.total_cost_usd,
+        "total_tokens_input": run.total_tokens_input,
+        "total_tokens_output": run.total_tokens_output,
+        "duration_ms": run.duration_ms,
+        "error_message": run.error_message,
+        "created_at": run.created_at.isoformat() if run.created_at else None,
+    }
+
+
+@app.delete("/api/analysis/run/{run_id}")
+def delete_analysis_run(run_id: int, db: Session = Depends(get_db)):
+    """Delete an analysis run."""
+    run = db.query(AnalysisRun).filter(AnalysisRun.id == run_id).first()
+    if not run:
+        raise HTTPException(404, "Run not found")
+    db.delete(run)
+    db.commit()
+    return {"message": "Run deleted", "id": run_id}
+
+
+class MemoRequest(BaseModel):
+    content_md: str
+    confidence_score: Optional[float] = None
+    tags: Optional[list] = None
+
+
+@app.get("/api/analysis/memo/{ticker}")
+def get_latest_memo(ticker: str, db: Session = Depends(get_db)):
+    """Get latest thesis memo for a ticker."""
+    ticker = ticker.upper().strip()
+    memo = (
+        db.query(ThesisMemo)
+        .filter(ThesisMemo.ticker == ticker)
+        .order_by(ThesisMemo.version.desc())
+        .first()
+    )
+    if not memo:
+        return {"ticker": ticker, "memo": None}
+    try:
+        tags = json.loads(memo.tags_json or "[]")
+    except json.JSONDecodeError:
+        tags = []
+    return {
+        "ticker": ticker,
+        "memo": {
+            "id": memo.id,
+            "version": memo.version,
+            "content_md": memo.content_md,
+            "confidence_score": memo.confidence_score,
+            "last_council_run_id": memo.last_council_run_id,
+            "tags": tags,
+            "created_at": memo.created_at.isoformat() if memo.created_at else None,
+            "updated_at": memo.updated_at.isoformat() if memo.updated_at else None,
+        },
+    }
+
+
+@app.post("/api/analysis/memo/{ticker}")
+def save_memo(ticker: str, body: MemoRequest, db: Session = Depends(get_db)):
+    """Create new version of thesis memo."""
+    ticker = ticker.upper().strip()
+    latest = (
+        db.query(ThesisMemo)
+        .filter(ThesisMemo.ticker == ticker)
+        .order_by(ThesisMemo.version.desc())
+        .first()
+    )
+    next_version = (latest.version + 1) if latest else 1
+
+    memo = ThesisMemo(
+        ticker=ticker,
+        version=next_version,
+        content_md=body.content_md,
+        confidence_score=body.confidence_score or 0.0,
+        tags_json=json.dumps(body.tags or []),
+    )
+    db.add(memo)
+    db.commit()
+    db.refresh(memo)
+
+    return {"message": "Memo saved", "id": memo.id, "version": memo.version}
 
 
 if __name__ == "__main__":

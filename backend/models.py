@@ -109,3 +109,38 @@ class PortfolioSnapshot(Base):
     total_pnl_pct = Column(Float, default=0.0)
     total_items = Column(Integer, default=0)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class AnalysisRun(Base):
+    """One council/research/sentiment run. Stores full input + output as JSON for audit trail."""
+    __tablename__ = "analysis_runs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    ticker = Column(String(10), nullable=False, index=True)
+    run_type = Column(String(20), nullable=False)  # 'council' | 'research' | 'sentiment'
+    input_thesis = Column(Text, default="")
+    output_json = Column(Text, default="{}")  # full result serialized
+    synthesis_text = Column(Text, default="")  # extracted synthesis for quick display
+    prompt_version = Column(String(50), default="")
+    total_tokens_input = Column(Integer, default=0)
+    total_tokens_output = Column(Integer, default=0)
+    total_cost_usd = Column(Float, default=0.0)
+    duration_ms = Column(Integer, default=0)
+    status = Column(String(20), default="completed")  # completed | failed | partial
+    error_message = Column(Text, default="")
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class ThesisMemo(Base):
+    """Versioned thesis memo per ticker. User-editable, council/research can append versions."""
+    __tablename__ = "thesis_memos"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    ticker = Column(String(10), nullable=False, index=True)
+    version = Column(Integer, default=1)
+    content_md = Column(Text, default="")
+    confidence_score = Column(Float, default=0.0)  # 0-10 from last council run
+    last_council_run_id = Column(Integer, default=0)
+    tags_json = Column(Text, default="[]")  # list of tags
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))

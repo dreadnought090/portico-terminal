@@ -1,0 +1,72 @@
+<!-- Analysis Mode Panel — slide-in from right -->
+<aside class="analysis-panel" id="analysis-panel" aria-hidden="true">
+    <div class="analysis-panel-header">
+        <h3><i class="fa fa-brain"></i> ANALYSIS MODE</h3>
+        <button class="analysis-panel-close" aria-label="Close">&times;</button>
+    </div>
+
+    <div class="analysis-panel-tabs">
+        <div class="analysis-tab active" data-tab="council">Council</div>
+        <div class="analysis-tab" data-tab="memo">Memo</div>
+        <div class="analysis-tab" data-tab="history">History</div>
+        <div class="analysis-tab disabled" title="Coming soon">Research</div>
+        <div class="analysis-tab disabled" title="Coming soon">Sentiment</div>
+    </div>
+
+    <div class="analysis-panel-body">
+
+        <!-- Shared ticker input -->
+        <div class="analysis-ticker-row">
+            <label class="analysis-label">Ticker:</label>
+            <input id="analysis-ticker" type="text" class="analysis-ticker-input" placeholder="BBCA" maxlength="6">
+        </div>
+
+        <!-- Council tab -->
+        <div class="analysis-tab-content" data-tab="council" style="display:block;">
+            <label class="analysis-label">Thesis (Markdown):</label>
+            <textarea
+                id="analysis-thesis"
+                class="analysis-thesis-editor"
+                placeholder="Tulis investment thesis di sini. Contoh:&#10;&#10;## Thesis&#10;BBCA tetap compounder terbaik di perbankan ID. ROE 20%+, NIM stabil, CASA tertinggi.&#10;&#10;## Bull case&#10;- Digital banking adoption drives cost efficiency&#10;- ..."></textarea>
+
+            <div class="analysis-actions">
+                <button class="analysis-btn" id="analysis-run-btn">▶ Run Council</button>
+                <button class="analysis-btn analysis-btn-secondary" id="analysis-estimate-btn">Refresh Estimate</button>
+                <button class="analysis-btn analysis-btn-secondary" id="analysis-thesis-to-memo-btn" title="Salin thesis ke memo">→ Memo</button>
+                <span id="analysis-estimate" class="analysis-cost-estimate"></span>
+            </div>
+            <div class="analysis-status" id="analysis-status"></div>
+
+            <div class="analysis-results" id="analysis-results">
+                <!-- Results rendered here by analysis.js -->
+            </div>
+
+            <div class="analysis-cost-estimate" style="margin-top:20px; padding-top:10px; border-top:1px solid var(--border, #333);">
+                Shortcuts: <strong>⌘/Ctrl+Shift+A</strong> toggle panel • <strong>⌘/Ctrl+Enter</strong> run council • <strong>Esc</strong> close
+            </div>
+        </div>
+
+        <!-- Memo tab -->
+        <div class="analysis-tab-content" data-tab="memo" style="display:none;">
+            <label class="analysis-label">Thesis Memo:</label>
+            <textarea
+                id="analysis-memo-content"
+                class="analysis-thesis-editor"
+                style="min-height:300px;"
+                placeholder="Memo akan tersimpan sebagai versioned doc per ticker"></textarea>
+            <div class="analysis-actions">
+                <button class="analysis-btn" id="analysis-memo-save-btn">💾 Save Version</button>
+                <span id="analysis-memo-info" class="analysis-cost-estimate"></span>
+            </div>
+        </div>
+
+        <!-- History tab -->
+        <div class="analysis-tab-content" data-tab="history" style="display:none;">
+            <div class="analysis-cost-estimate" style="margin-bottom:10px;">
+                Past analysis runs. Click untuk load ke Council tab.
+            </div>
+            <div id="analysis-history-list"></div>
+        </div>
+
+    </div>
+</aside>
