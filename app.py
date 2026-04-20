@@ -41,6 +41,7 @@ from backend.stock_service import (
 )
 from backend.ocr_service import extract_stocks_from_image, clean_ocr_ticker
 from backend.analysis.council import run_council, estimate_council_cost
+from backend.analysis.research import draft_memo, estimate_draft_cost
 
 scheduler = AsyncIOScheduler() if USE_SCHEDULER else None
 
@@ -1180,6 +1181,40 @@ def get_latest_memo(ticker: str, db: Session = Depends(get_db)):
             "updated_at": memo.updated_at.isoformat() if memo.updated_at else None,
         },
     }
+
+
+@app.get("/api/analysis/research/{ticker}/estimate")
+def estimate_research(ticker: str):
+    """Cost estimate for memo draft."""
+    return {"ticker": ticker.upper(), **estimate_draft_cost()}
+
+
+@app.post("/api/analysis/research/{ticker}")
+async def api_draft_memo(ticker: str, db: Session = Depends(get_db)):
+    """Auto-draft thesis memo from Portico stock data + Claude Opus."""
+    ticker = ticker.upper().strip()
+    result = await draft_memo(ticker, db)
+
+    status = "completed" if not result.get("error") else "failed"
+    run = AnalysisRun(
+        ticker=ticker,
+        run_type="research",
+        input_thesis="",
+        output_json=json.dumps(result, default=str),
+        synthesis_text=result.get("memo_md", ""),
+        prompt_version=result.get("prompt_version", ""),
+        total_tokens_input=result.get("input_tokens", 0),
+        total_tokens_output=result.get("output_tokens", 0),
+        total_cost_usd=result.get("cost_usd", 0.0),
+        duration_ms=result.get("duration_ms", 0),
+        status=status,
+        error_message=result.get("error", "") or "",
+    )
+    db.add(run)
+    db.commit()
+    db.refresh(run)
+
+    return {"run_id": run.id, **result}
 
 
 @app.post("/api/analysis/memo/{ticker}")

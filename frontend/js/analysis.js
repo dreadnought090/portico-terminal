@@ -43,6 +43,12 @@
                     tags: tags || [],
                 }),
             }).then((r) => r.json()),
+
+        draftMemo: (ticker) =>
+            fetch(`/api/analysis/research/${ticker}`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+            }).then((r) => r.json()),
     };
 
     const state = {
@@ -308,6 +314,51 @@
         setActiveTab("memo");
     }
 
+    async function draftFromScratch() {
+        const ticker = $("#analysis-ticker").value.trim().toUpperCase();
+        if (!ticker) {
+            setStatus("Ticker kosong — isi ticker dulu sebelum draft", "error");
+            return;
+        }
+
+        const currentThesis = $("#analysis-thesis").value.trim();
+        if (currentThesis.length > 50) {
+            const confirmOverwrite = confirm(
+                "Thesis existing akan di-overwrite dengan draft baru. Lanjutkan?\n\n" +
+                "Tip: save dulu ke tab Memo sebelum draft (klik '→ Memo')."
+            );
+            if (!confirmOverwrite) return;
+        }
+
+        state.currentTicker = ticker;
+        state.isRunning = true;
+        $("#analysis-draft-btn").disabled = true;
+        $("#analysis-run-btn").disabled = true;
+        setStatus("Drafting thesis dari data Portico... (15-30 detik)", "running");
+
+        try {
+            const result = await API.draftMemo(ticker);
+
+            if (result.error) {
+                setStatus("Draft error: " + result.error, "error");
+            } else {
+                $("#analysis-thesis").value = result.memo_md || "";
+                const ctx = result.context_summary || {};
+                setStatus(
+                    `Draft ready (${(result.duration_ms / 1000).toFixed(1)}s, $${result.cost_usd.toFixed(4)}) • ${ctx.peers_count || 0} peers, ${ctx.news_count || 0} news • Edit sesuai view lo, lalu Run Council`,
+                    ""
+                );
+                updateEstimate();
+            }
+        } catch (e) {
+            setStatus("Network error: " + e.message, "error");
+        } finally {
+            state.isRunning = false;
+            $("#analysis-draft-btn").disabled = false;
+            $("#analysis-run-btn").disabled = false;
+        }
+    }
+
     // ── Init ─────────────────────────────────────────────────────
     function init() {
         // Toggle button
@@ -347,6 +398,9 @@
         // Memo save
         $("#analysis-memo-save-btn").addEventListener("click", saveMemo);
         $("#analysis-thesis-to-memo-btn").addEventListener("click", copyThesisToMemo);
+
+        // Draft from scratch
+        $("#analysis-draft-btn").addEventListener("click", draftFromScratch);
 
         // Keyboard: Ctrl+Enter or Cmd+Enter to run council
         $("#analysis-thesis").addEventListener("keydown", (e) => {
