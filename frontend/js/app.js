@@ -721,6 +721,7 @@ async function loadDashboard() {
         renderTypeChart(portfolioData.by_type);
         renderDashboardTable(portfolioData.items);
         updateTickerBar(portfolioData.items);
+        updateBrokerSelectDropdown();
 
         document.getElementById('dashboard-update-time').textContent = `Updated: ${new Date().toLocaleTimeString('id-ID')}`;
 
@@ -2701,6 +2702,25 @@ function exportPortfolioExcel() {
 function toggleAllPortfolio(master) {
     document.querySelectorAll('.portfolio-checkbox').forEach(cb => { cb.checked = master.checked; });
     updatePortfolioSelection();
+}
+
+function selectByBroker(broker) {
+    document.querySelectorAll('.portfolio-checkbox').forEach(cb => {
+        const id = parseInt(cb.dataset.id);
+        const item = portfolioData?.items?.find(i => i.id === id);
+        cb.checked = broker ? (item?.broker === broker) : false;
+    });
+    const selectAll = document.getElementById('portfolio-select-all');
+    if (selectAll) selectAll.checked = false;
+    updatePortfolioSelection();
+}
+
+function updateBrokerSelectDropdown() {
+    const sel = document.getElementById('portfolio-select-broker');
+    if (!sel || !portfolioData?.items) return;
+    const brokers = [...new Set(portfolioData.items.map(i => i.broker).filter(Boolean))].sort();
+    sel.innerHTML = '<option value="">Select per Sekuritas...</option>' +
+        brokers.map(b => `<option value="${b}">${b} (${portfolioData.items.filter(i => i.broker === b).length})</option>`).join('');
 }
 
 function updatePortfolioSelection() {

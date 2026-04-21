@@ -9,7 +9,7 @@
         <div class="analysis-tab active" data-tab="council">Council</div>
         <div class="analysis-tab" data-tab="memo">Memo</div>
         <div class="analysis-tab" data-tab="history">History</div>
-        <div class="analysis-tab disabled" title="Coming soon">Research</div>
+        <div class="analysis-tab" data-tab="research">Deep Research</div>
         <div class="analysis-tab disabled" title="Coming soon">Sentiment</div>
     </div>
 
@@ -69,5 +69,199 @@
             <div id="analysis-history-list"></div>
         </div>
 
+        <!-- Deep Research tab — multi-LLM paste workflow -->
+        <div class="analysis-tab-content" data-tab="research" style="display:none;">
+            <div class="deep-research-intro">
+                <span class="analysis-label">Workflow:</span>
+                <ol class="deep-research-steps">
+                    <li>Copy master prompt &amp; run di Claude / Gemini / ChatGPT Deep Research (paid subs)</li>
+                    <li>Paste 3 outputs di bawah</li>
+                    <li>Portico consolidate &rarr; Briefing Doc (agreement / conflict / gaps)</li>
+                    <li>Council v2 debate &rarr; Citrini-style memo</li>
+                </ol>
+            </div>
+
+            <div class="analysis-actions" style="margin-bottom:10px;">
+                <button class="analysis-btn analysis-btn-secondary" id="dr-copy-prompt-btn">📋 Copy Master Prompt</button>
+                <span id="dr-copy-status" class="analysis-cost-estimate"></span>
+            </div>
+
+            <label class="analysis-label">Your Thesis (1-3 kalimat — inti konviksi lu):</label>
+            <textarea
+                id="dr-thesis"
+                class="analysis-thesis-editor"
+                style="min-height:70px;"
+                placeholder="Contoh: BBCA mispriced — market underestimate CASA durability vs BBRI/BMRI post rate-cut cycle."></textarea>
+
+            <label class="analysis-label" style="margin-top:14px; display:block;">Deep Research Outputs:</label>
+
+            <div class="dr-paste-tabs">
+                <div class="dr-paste-tab active" data-paste-tab="claude">Claude <span class="dr-tok-count" id="dr-tok-claude">0 tok</span></div>
+                <div class="dr-paste-tab" data-paste-tab="gemini">Gemini <span class="dr-tok-count" id="dr-tok-gemini">0 tok</span></div>
+                <div class="dr-paste-tab" data-paste-tab="gpt">ChatGPT <span class="dr-tok-count" id="dr-tok-gpt">0 tok</span></div>
+            </div>
+
+            <textarea id="dr-paste-claude" class="analysis-thesis-editor dr-paste-area" data-paste-content="claude" style="display:block;min-height:200px;" placeholder="Paste Claude Deep Research output di sini..."></textarea>
+            <textarea id="dr-paste-gemini" class="analysis-thesis-editor dr-paste-area" data-paste-content="gemini" style="display:none;min-height:200px;" placeholder="Paste Gemini Deep Research output di sini..."></textarea>
+            <textarea id="dr-paste-gpt" class="analysis-thesis-editor dr-paste-area" data-paste-content="gpt" style="display:none;min-height:200px;" placeholder="Paste ChatGPT Deep Research output di sini..."></textarea>
+
+            <div class="dr-cost-panel">
+                <div class="dr-cost-row">
+                    <span class="analysis-label">Total input (3 outputs + thesis):</span>
+                    <span id="dr-total-tokens">0 tok</span>
+                </div>
+                <div class="dr-cost-row">
+                    <span class="analysis-label">Briefing (consolidation pass):</span>
+                    <span id="dr-cost-briefing">$0.0000</span>
+                </div>
+                <div class="dr-cost-row">
+                    <span class="analysis-label">Council v2 (5 agents + synth):</span>
+                    <span id="dr-cost-council">$0.0000</span>
+                </div>
+                <div class="dr-cost-row dr-cost-total">
+                    <span class="analysis-label">Est. total per run:</span>
+                    <span id="dr-cost-total">$0.0000</span>
+                </div>
+                <div class="analysis-cost-estimate" style="margin-top:6px;">
+                    Model:
+                    <select id="dr-model-select" class="dr-model-select">
+                        <option value="sonnet46" selected>Sonnet 4.6 ($3/$15 per M)</option>
+                        <option value="opus47">Opus 4.7 ($15/$75 per M)</option>
+                        <option value="haiku45">Haiku 4.5 ($0.80/$4 per M)</option>
+                    </select>
+                    • client-side est, real cost di backend run
+                </div>
+            </div>
+
+            <div class="analysis-actions" style="margin-top:12px;">
+                <button class="analysis-btn analysis-btn-secondary" id="dr-briefing-btn" title="Step 1 only: consolidate 3 outputs &rarr; briefing doc">1. Build Briefing</button>
+                <button class="analysis-btn" id="dr-full-run-btn" title="Chain: briefing &rarr; council v2 &rarr; memo">▶ Run Full Analysis</button>
+            </div>
+            <div class="analysis-status" id="dr-status"></div>
+
+            <div class="analysis-results" id="dr-results"></div>
+        </div>
+
     </div>
+
+    <!-- Master prompt text, read by JS. script type=text/plain prevents HTML/JS parsing. -->
+    <script type="text/plain" id="dr-master-prompt">
+You are a senior buy-side analyst preparing institutional-grade equity research for a portfolio allocator who will make a real capital allocation decision from your output. Target quality bar: Citrini-grade — specific, contrarian where warranted, evidence-grounded, zero analyst-speak fluff.
+
+TARGET
+- Ticker: <TICKER>
+- Exchange: <EXCHANGE, e.g. IDX / NASDAQ>
+- Date of analysis: <YYYY-MM-DD>
+- Output language: English (quote primary sources in original language)
+
+OUTPUT CONTRACT
+Produce a research memo in markdown with exactly the 16 sections below, in order, using the exact headings shown. Every section is mandatory. If data is unavailable or stale, write "DATA GAP: <what's missing>" — do NOT fabricate. Every numerical claim must include: value + unit + period + source + date. Every qualitative claim must cite a specific source (filing / press release / transcript / article URL + date).
+
+SOURCING RULES
+- Prefer primary sources: 10-K / annual report / investor day / earnings transcripts over news summaries.
+- For Indonesian issuers: IDX e-disclosure, Annual Report PDF, Kontan, Bisnis Indonesia, company IR page.
+- For global issuers: SEC filings, IR page, earnings transcripts.
+- Cite URLs where possible. If web access is limited, describe the source + date + note the limitation.
+- Use the latest available data. State as-of date per figure.
+
+ANTI-PATTERNS (reject these)
+- Boilerplate: "well-positioned", "strong management", "attractive valuation" without evidence/comparison.
+- Consensus regurgitation — do not just summarize sell-side reports.
+- Recency bias — do not overweight last quarter.
+- Optimism without counter-argument.
+- Hiding uncertainty in passive voice.
+- Generic Porter 5 Forces — name the actual threats, don't just say "medium/high".
+
+=====================================================================
+REQUIRED SECTIONS
+=====================================================================
+
+# 1. Business Overview
+- What the company actually does (1 paragraph, plain English).
+- Revenue breakdown: by segment AND by geography (% of latest FY).
+- 3-sentence business model: how they make money, who pays, what is delivered.
+
+# 2. Unit Economics & Money-Making Model
+- Per-unit economics (ARPU / revenue-per-customer / -store / -ton etc.).
+- Gross / operating / net margin — last 5 years with trend direction.
+- Cash conversion: OCF / Net Income, 5y average.
+- Key operating driver that creates value (e.g., bank: NIM × Earning Assets; retail: SSSG × store count; SaaS: NRR × ACV).
+
+# 3. Financial Statements — 5 Years
+- Revenue, EBITDA, Net Income, EPS — 5y CAGR.
+- Balance sheet: Total Assets, Equity, Total Debt, Cash, Goodwill.
+- Cash flow: OCF, Capex, FCF — 5y trend.
+- Key ratios: ROE, ROIC, Debt/Equity, Current Ratio, Interest Coverage.
+- TTM if available.
+- Flag aggressive accounting (revenue timing anomalies, capitalized expenses, related-party transactions, frequent one-offs).
+
+# 4. Balance Sheet Quality & Asset Base
+- What does the company own? Describe the asset base concretely.
+- Hidden assets (undervalued real estate, stakes in other companies, NOLs, IP, brand).
+- Hidden / off-balance-sheet liabilities (operating leases, guarantees, lawsuits, pension gaps, contingents).
+- Tangible book value vs. market cap.
+
+# 5. Management, Governance & Capital Allocation
+- CEO / CFO tenure + prior track record + ownership alignment.
+- Ownership structure, founder/family involvement, board independence.
+- Historical capital allocation evidence: dividends, buybacks, M&A outcomes, capex discipline. Rate the track record with specifics.
+- Compensation structure — incentive alignment vs. shareholders.
+
+# 6. Corporate Actions & Company Plan ("Rencana Perseroan")
+- Corporate actions last 12m: M&A, divestitures, rights issues, private placements, dividends, splits, buybacks.
+- Forward plans: management guidance, stated strategy, capex pipeline, new business lines, ESG commitments with capital implications.
+- Source each to specific filings / investor decks with dates.
+
+# 7. Industry Dynamics
+- TAM (size + growth rate + source).
+- Porter 5 Forces — specific, named threats (not generic).
+- Regulatory environment + pending rule changes.
+- Technology / substitution disruption vector.
+
+# 8. Competitive Position
+- Market share + 3-5y trend.
+- Moat source — pick explicitly: network effect / switching cost / scale / brand / regulatory / IP / geography. Rate durability.
+- Top 3 competitors: who, relative position, where they compete hardest.
+- Stress test: what happens if a well-capitalized new entrant shows up?
+
+# 9. Recent Developments (last 6 months)
+- Material news, filings, earnings surprises — chronological with dates.
+- Narrative evolution — how has the market story shifted.
+- Insider transactions last 6m with context.
+
+# 10. Catalysts (forward)
+- Specific events that could re-rate the stock, with expected timing.
+- For each: probability (low/med/high), magnitude (%), direction.
+
+# 11. Risks (forward)
+- Top 5 risks ranked by probability × impact.
+- For each: specific leading indicator to monitor, potential mitigation.
+
+# 12. Valuation
+- Current multiples: P/E (TTM + forward), P/B, EV/EBITDA, dividend yield.
+- Peer comparison: ≥3 relevant peers, multiples side-by-side.
+- Historical range: where does current valuation sit vs. 5y and 10y.
+- Reverse-DCF: what growth / margin assumption is current price implying? Is it reasonable?
+
+# 13. Consensus View
+- Sell-side coverage: count, avg rating, consensus target, consensus EPS estimates (current FY + next FY).
+- What is the dominant market narrative about this stock right now?
+
+# 14. Variant Perception  [CRITICAL — DO NOT SKIP]
+- Where is consensus wrong? Identify 1-3 specific factors where your view diverges from sell-side / market consensus.
+- Each divergence must be: specific, testable, linked to a catalyst or risk.
+- If you cannot identify a genuine variant perception, state so explicitly and explain why the stock appears fairly priced / the market is efficient here. DO NOT FABRICATE AN EDGE.
+
+# 15. Pre-Mortem
+- If 12 months from now this stock is down 40%, what is the single most likely reason? Be specific.
+- If 12 months from now this stock is up 60%, what is the single most likely reason? Be specific.
+
+# 16. Data Gaps & Confidence
+- List data you could not source but would need for a high-conviction view.
+- Per-section confidence rating (High / Medium / Low). Flag sections where you relied on weaker sources or inference.
+
+=====================================================================
+
+Begin the memo now. Output only the memo content, no preamble.
+    </script>
 </aside>

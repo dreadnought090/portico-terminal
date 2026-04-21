@@ -359,6 +359,198 @@
         }
     }
 
+    // ── Deep Research tab ────────────────────────────────────────
+    // Pricing per 1M tokens (input / output USD)
+    const DR_PRICING = {
+        sonnet46: { input: 3.0, output: 15.0, label: "Sonnet 4.6" },
+        opus47:   { input: 15.0, output: 75.0, label: "Opus 4.7" },
+        haiku45:  { input: 0.80, output: 4.0, label: "Haiku 4.5" },
+    };
+    let drCurrentModel = "sonnet46";
+
+    function drCharsToTokens(chars) {
+        // Rough heuristic: English/Indo mix ~4 chars per token
+        return Math.ceil((chars || 0) / 4);
+    }
+
+    function drUpdateCostEstimate() {
+        const thesisTok = drCharsToTokens($("#dr-thesis").value.length);
+        const claudeTok = drCharsToTokens($("#dr-paste-claude").value.length);
+        const geminiTok = drCharsToTokens($("#dr-paste-gemini").value.length);
+        const gptTok    = drCharsToTokens($("#dr-paste-gpt").value.length);
+
+        $("#dr-tok-claude").textContent = claudeTok.toLocaleString() + " tok";
+        $("#dr-tok-gemini").textContent = geminiTok.toLocaleString() + " tok";
+        $("#dr-tok-gpt").textContent    = gptTok.toLocaleString() + " tok";
+
+        const totalInput = thesisTok + claudeTok + geminiTok + gptTok;
+        $("#dr-total-tokens").textContent = totalInput.toLocaleString() + " tok";
+
+        const p = DR_PRICING[drCurrentModel];
+        const M = 1_000_000;
+
+        // Briefing pass: input = all pastes + thesis; output ~3k tokens summary
+        const briefingOut = 3000;
+        const briefingCost = (totalInput * p.input + briefingOut * p.output) / M;
+
+        // Council v2: 5 agents + synthesizer
+        // Each agent input ~ briefing (3k) + thesis + priming (~1k) = ~5k in, ~2k out
+        const agentIn = 5000, agentOut = 2000;
+        const agentCost = 5 * (agentIn * p.input + agentOut * p.output) / M;
+        // Synthesizer: 5 × agent outputs (10k) + prompt (2k) in, 3k out
+        const synthIn = 12000, synthOut = 3000;
+        const synthCost = (synthIn * p.input + synthOut * p.output) / M;
+        const councilCost = agentCost + synthCost;
+
+        const total = briefingCost + councilCost;
+
+        $("#dr-cost-briefing").textContent = "$" + briefingCost.toFixed(4);
+        $("#dr-cost-council").textContent  = "$" + councilCost.toFixed(4);
+        $("#dr-cost-total").textContent    = "$" + total.toFixed(4);
+    }
+
+    function drCopyMasterPrompt() {
+        const el = document.getElementById("dr-master-prompt");
+        if (!el) return;
+        const ticker = ($("#analysis-ticker").value.trim().toUpperCase()) || "<TICKER>";
+        const today = new Date().toISOString().slice(0, 10);
+        const text = el.textContent
+            .replace(/<TICKER>/g, ticker)
+            .replace(/<YYYY-MM-DD>/g, today)
+            .trim();
+        navigator.clipboard.writeText(text).then(() => {
+            const s = $("#dr-copy-status");
+            s.textContent = "✓ Copied • paste ke Claude/Gemini/ChatGPT Deep Research";
+            setTimeout(() => { s.textContent = ""; }, 4000);
+        }).catch((e) => {
+            $("#dr-copy-status").textContent = "Copy failed: " + e.message;
+        });
+    }
+
+    function drSwitchPasteTab(tabName) {
+        $$(".dr-paste-tab").forEach((t) => t.classList.toggle("active", t.dataset.pasteTab === tabName));
+        $$(".dr-paste-area").forEach((a) => { a.style.display = a.dataset.pasteContent === tabName ? "block" : "none"; });
+    }
+
+    function drSetStatus(text, type = "") {
+        const el = $("#dr-status");
+        el.textContent = text;
+        el.className = "analysis-status " + type;
+    }
+
+    function drCollectPayload() {
+        return {
+            thesis: $("#dr-thesis").value.trim(),
+            model: drCurrentModel,
+            sources: {
+                claude: $("#dr-paste-claude").value,
+                gemini: $("#dr-paste-gemini").value,
+                gpt:    $("#dr-paste-gpt").value,
+            },
+        };
+    }
+
+    function drValidate() {
+        const ticker = $("#analysis-ticker").value.trim().toUpperCase();
+        if (!ticker) { drSetStatus("Ticker kosong (isi di atas)", "error"); return null; }
+        const payload = drCollectPayload();
+        const anyPaste = payload.sources.claude || payload.sources.gemini || payload.sources.gpt;
+        if (!anyPaste) { drSetStatus("Minimal 1 deep research output harus dipaste", "error"); return null; }
+        if (!payload.thesis) { drSetStatus("Thesis kosong — tulis 1-3 kalimat konviksi lu", "error"); return null; }
+        return { ticker, payload };
+    }
+
+    async function drBuildBriefing() {
+        const v = drValidate();
+        if (!v) return;
+        drSetStatus("Building briefing... (10-30s)", "running");
+        $("#dr-briefing-btn").disabled = true;
+        try {
+            const r = await fetch(`/api/analysis/briefing/${v.ticker}`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(v.payload),
+            });
+            if (r.status === 404 || r.status === 501) {
+                drSetStatus("Backend endpoint /api/analysis/briefing belum diimplementasi (next step)", "error");
+                return;
+            }
+            const data = await r.json();
+            if (data.error) { drSetStatus("Error: " + data.error, "error"); return; }
+            drSetStatus(`Briefing ready • $${(data.cost_usd || 0).toFixed(4)}`, "");
+            $("#dr-results").innerHTML = "";
+            $("#dr-results").appendChild(drBlock("briefing", "Council Briefing Doc", data.briefing_md || "", false));
+        } catch (e) {
+            drSetStatus("Network error: " + e.message, "error");
+        } finally {
+            $("#dr-briefing-btn").disabled = false;
+        }
+    }
+
+    async function drRunFullAnalysis() {
+        const v = drValidate();
+        if (!v) return;
+        drSetStatus("Running full analysis: briefing → council v2 → memo... (60-180s)", "running");
+        $("#dr-full-run-btn").disabled = true;
+        $("#dr-briefing-btn").disabled = true;
+        $("#dr-results").innerHTML = "";
+        try {
+            const r = await fetch(`/api/analysis/deep-council/${v.ticker}`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(v.payload),
+            });
+            if (r.status === 404 || r.status === 501) {
+                drSetStatus("Backend endpoint /api/analysis/deep-council belum diimplementasi (next step)", "error");
+                return;
+            }
+            const data = await r.json();
+            if (data.error) { drSetStatus("Error: " + data.error, "error"); return; }
+            drSetStatus(`Done • $${(data.total_cost_usd || 0).toFixed(4)} • ${((data.total_duration_ms || 0)/1000).toFixed(1)}s`, "");
+            drRenderFullResult(data);
+        } catch (e) {
+            drSetStatus("Network error: " + e.message, "error");
+        } finally {
+            $("#dr-full-run-btn").disabled = false;
+            $("#dr-briefing-btn").disabled = false;
+        }
+    }
+
+    function drRenderFullResult(data) {
+        const c = $("#dr-results");
+        c.innerHTML = "";
+        if (data.briefing_md) c.appendChild(drBlock("briefing", "Council Briefing Doc", data.briefing_md, true));
+        if (data.panel) {
+            const order = ["bull", "bear", "macro", "devil", "variant"];
+            const labels = { bull: "Bull", bear: "Bear", macro: "Macro", devil: "Devil's Advocate", variant: "Variant Perception" };
+            order.forEach((k) => {
+                if (data.panel[k]) c.appendChild(drBlock(k, labels[k], data.panel[k].output || "", false));
+            });
+        }
+        if (data.memo_md) c.appendChild(drBlock("synthesis", "Citrini-style Memo", data.memo_md, false));
+    }
+
+    function drBlock(roleKey, label, md, collapsed) {
+        const block = document.createElement("div");
+        block.className = "analysis-result-block";
+        block.innerHTML = `
+            <div class="analysis-result-header" style="cursor:pointer;user-select:none;">
+                <span class="analysis-result-role ${roleKey}">${label}</span>
+                <span class="analysis-result-meta">${collapsed ? "[+] click to expand" : "[−] click to collapse"}</span>
+            </div>
+            <div class="analysis-result-body" style="${collapsed ? "display:none;" : ""}">${renderMarkdown(md)}</div>
+        `;
+        const header = block.querySelector(".analysis-result-header");
+        const body = block.querySelector(".analysis-result-body");
+        const meta = block.querySelector(".analysis-result-meta");
+        header.addEventListener("click", () => {
+            const nowHidden = body.style.display === "none";
+            body.style.display = nowHidden ? "block" : "none";
+            meta.textContent = nowHidden ? "[−] click to collapse" : "[+] click to expand";
+        });
+        return block;
+    }
+
     // ── Init ─────────────────────────────────────────────────────
     function init() {
         // Toggle button
@@ -409,6 +601,31 @@
                 runCouncil();
             }
         });
+
+        // Deep Research bindings
+        $("#dr-copy-prompt-btn").addEventListener("click", drCopyMasterPrompt);
+        $$(".dr-paste-tab").forEach((t) => {
+            t.addEventListener("click", () => drSwitchPasteTab(t.dataset.pasteTab));
+        });
+
+        let drEstTimer;
+        const drDebounced = () => { clearTimeout(drEstTimer); drEstTimer = setTimeout(drUpdateCostEstimate, 250); };
+        ["dr-thesis", "dr-paste-claude", "dr-paste-gemini", "dr-paste-gpt"].forEach((id) => {
+            const el = $("#" + id);
+            if (el) el.addEventListener("input", drDebounced);
+        });
+
+        const modelSel = $("#dr-model-select");
+        if (modelSel) {
+            modelSel.addEventListener("change", (e) => {
+                drCurrentModel = e.target.value;
+                drUpdateCostEstimate();
+            });
+        }
+
+        $("#dr-briefing-btn").addEventListener("click", drBuildBriefing);
+        $("#dr-full-run-btn").addEventListener("click", drRunFullAnalysis);
+        drUpdateCostEstimate();
 
         // Global keyboard: Ctrl+Shift+A or Cmd+Shift+A to toggle panel
         document.addEventListener("keydown", (e) => {

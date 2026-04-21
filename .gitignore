@@ -11,3 +11,9 @@ build/
 *.log
 server.log
 *.exe
+.venv-mac/
+.venv/
+venv/
+*BACKUP*.txt
+*.key
+*.pem
