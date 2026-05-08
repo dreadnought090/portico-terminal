@@ -13,6 +13,11 @@
     <link rel="apple-touch-icon" href="/static/icon-192.png">
     <link rel="stylesheet" href="/frontend/css/terminal.css?v=20260411a">
     <link rel="stylesheet" href="/frontend/css/analysis.css?v=20260420b">
+    <link rel="stylesheet" href="/frontend/css/dashboard-v2.css?v=20260507e">
+    <!-- Inter (UI) + JetBrains Mono (numbers) for v2 dashboard -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
     <!-- Animate.css -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/animate.css/4.1.1/animate.min.css">
@@ -88,6 +93,14 @@
                 <i class="fas fa-file-alt"></i>
                 <span>Disclosure</span>
             </button>
+            <button class="nav-btn" onclick="showPanel('idx-market')" data-panel="idx-market">
+                <i class="fas fa-broadcast-tower"></i>
+                <span>IDX Pasar</span>
+            </button>
+            <button class="nav-btn" onclick="showPanel('thesis')" data-panel="thesis">
+                <i class="fas fa-book-bookmark"></i>
+                <span>Thesis</span>
+            </button>
             <div class="sidebar-divider"></div>
             <button class="nav-btn" onclick="showPanel('add-stock')" data-panel="add-stock">
                 <i class="fas fa-plus-circle"></i>
@@ -101,8 +114,8 @@
 
         <!-- CONTENT AREA -->
         <main class="content">
-            <!-- DASHBOARD PANEL -->
-            <div class="panel active" id="panel-dashboard">
+            <!-- DASHBOARD PANEL (v2 — Modern Trading Desk redesign) -->
+            <div class="panel active v2" id="panel-dashboard">
                 <div class="panel-header">
                     <h2><i class="fas fa-th-large"></i> Market Dashboard</h2>
                     <span class="update-time" id="dashboard-update-time"></span>
@@ -161,6 +174,15 @@
                         <canvas id="type-chart" height="250"></canvas>
                     </div>
                 </div>
+                <div class="dash-section full-width" id="health-section" style="margin-bottom:16px;">
+                    <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:12px;">
+                        <h3 style="margin:0;">System Health</h3>
+                        <span class="update-time" id="health-update-time"></span>
+                    </div>
+                    <div id="health-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px;">
+                        <div class="health-tile" data-loading="1"><div class="ht-label">Loading…</div></div>
+                    </div>
+                </div>
                 <div class="dash-section full-width">
                     <h3>Portfolio Overview</h3>
                     <div class="table-wrapper">
@@ -171,8 +193,9 @@
                                     <th>Company</th>
                                     <th>Sektor</th>
                                     <th class="num">Lot</th>
-                                    <th class="num">Avg Price</th>
-                                    <th class="num">Last Price</th>
+                                    <th class="num">Last</th>
+                                    <th class="num">Daily Δ</th>
+                                    <th class="num">7d</th>
                                     <th class="num">Market Value</th>
                                     <th class="num">P&L</th>
                                     <th class="num">P&L %</th>
@@ -339,6 +362,101 @@
                 <div id="disclosure-content">
                     <p class="placeholder-text">Memuat data keterbukaan informasi...</p>
                 </div>
+            </div>
+
+            <!-- IDX MARKET PANEL (broker summary, foreign flow, dividend, movers) -->
+            <div class="panel" id="panel-idx-market">
+                <div class="panel-header">
+                    <h2><i class="fas fa-broadcast-tower"></i> IDX Pasar — Live Market Data</h2>
+                    <span class="update-time" id="idx-market-date">--</span>
+                </div>
+                <div class="idx-tabs" style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;">
+                    <button class="btn btn-sm idx-tab-btn active" data-idx-tab="movers" onclick="showIdxTab('movers')">Top Gainer/Loser</button>
+                    <button class="btn btn-sm idx-tab-btn" data-idx-tab="broker" onclick="showIdxTab('broker')">Broker Summary</button>
+                    <button class="btn btn-sm idx-tab-btn" data-idx-tab="foreign" onclick="showIdxTab('foreign')">Foreign Flow</button>
+                    <button class="btn btn-sm idx-tab-btn" data-idx-tab="dividend" onclick="showIdxTab('dividend')">Dividen Kalender</button>
+                    <input type="date" id="idx-market-datepicker" onchange="reloadIdxMarket()" style="margin-left:auto;padding:4px 8px;border-radius:6px;background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border);font-size:11px;">
+                </div>
+
+                <!-- Movers tab -->
+                <div class="idx-tab-content" id="idx-tab-movers">
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+                        <div>
+                            <h3 style="margin:0 0 8px 0;color:#22c55e;">▲ Top Gainers</h3>
+                            <table class="data-table">
+                                <thead><tr><th>Code</th><th>Close</th><th>%</th><th>Value</th></tr></thead>
+                                <tbody id="idx-gainers-body"><tr><td colspan="4" class="placeholder-text">Memuat...</td></tr></tbody>
+                            </table>
+                        </div>
+                        <div>
+                            <h3 style="margin:0 0 8px 0;color:#ef4444;">▼ Top Losers</h3>
+                            <table class="data-table">
+                                <thead><tr><th>Code</th><th>Close</th><th>%</th><th>Value</th></tr></thead>
+                                <tbody id="idx-losers-body"><tr><td colspan="4" class="placeholder-text">Memuat...</td></tr></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Broker summary tab -->
+                <div class="idx-tab-content hidden" id="idx-tab-broker">
+                    <table class="data-table">
+                        <thead><tr><th>#</th><th>Code</th><th>Broker</th><th>Total Value</th><th>Volume</th><th>Freq</th></tr></thead>
+                        <tbody id="idx-broker-body"><tr><td colspan="6" class="placeholder-text">Memuat...</td></tr></tbody>
+                    </table>
+                </div>
+
+                <!-- Foreign flow tab -->
+                <div class="idx-tab-content hidden" id="idx-tab-foreign">
+                    <div class="search-inline">
+                        <input type="text" id="idx-foreign-ticker" placeholder="Ticker (cth: BBCA)" onkeydown="if(event.key==='Enter')loadIdxForeign()" />
+                        <button class="btn btn-primary" onclick="loadIdxForeign()"><i class="fas fa-search"></i> Cek</button>
+                    </div>
+                    <div id="idx-foreign-content" style="margin-top:12px;">
+                        <p class="placeholder-text">Masukkan ticker untuk cek foreign flow harian</p>
+                    </div>
+                </div>
+
+                <!-- Dividend calendar tab -->
+                <div class="idx-tab-content hidden" id="idx-tab-dividend">
+                    <table class="data-table">
+                        <thead><tr><th>Code</th><th>Nama</th><th>Cash Div</th><th>Cum</th><th>Ex</th><th>Record</th><th>Payment</th></tr></thead>
+                        <tbody id="idx-dividend-body"><tr><td colspan="7" class="placeholder-text">Memuat...</td></tr></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- THESIS TRACKER PANEL (Merriot — shared with Telegram bot) -->
+            <div class="panel" id="panel-thesis">
+                <div class="panel-header">
+                    <h2><i class="fas fa-book-bookmark"></i> Thesis Tracker</h2>
+                    <span class="update-time" id="thesis-stats">--</span>
+                </div>
+                <div class="thesis-tabs" style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;">
+                    <button class="btn btn-sm thesis-tab-btn active" data-thesis-tab="all" onclick="showThesisTab('all')">Semua</button>
+                    <button class="btn btn-sm thesis-tab-btn" data-thesis-tab="due" onclick="showThesisTab('due')">Due Minggu Ini</button>
+                    <button class="btn btn-sm thesis-tab-btn" data-thesis-tab="reviewed" onclick="showThesisTab('reviewed')">Reviewed</button>
+                    <button class="btn btn-sm thesis-tab-btn" data-thesis-tab="invalid" onclick="showThesisTab('invalid')">Invalid</button>
+                    <input type="text" id="thesis-filter-ticker" placeholder="Filter ticker..." style="margin-left:auto;padding:4px 8px;border-radius:6px;background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border);font-size:11px;width:140px;" onkeyup="if(event.key==='Enter')loadThesis()">
+                    <button class="btn btn-primary btn-sm" onclick="openThesisCreate()"><i class="fas fa-plus"></i> Note Baru</button>
+                </div>
+                <div id="thesis-list-container">
+                    <p class="placeholder-text">Memuat thesis notes...</p>
+                </div>
+            </div>
+
+            <!-- THESIS CREATE/EDIT MODAL (simple inline form, hidden by default) -->
+            <div class="panel hidden" id="panel-thesis-create" style="position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:min(700px,92vw);max-height:90vh;overflow:auto;background:var(--bg-primary);border:1px solid var(--border);border-radius:12px;padding:20px;z-index:1000;box-shadow:0 8px 32px rgba(0,0,0,.5);">
+                <div class="panel-header" style="margin-bottom:12px;">
+                    <h2><i class="fas fa-plus"></i> <span id="thesis-modal-title">Note Baru</span></h2>
+                    <button class="btn btn-sm" onclick="closeThesisCreate()"><i class="fas fa-times"></i></button>
+                </div>
+                <textarea id="thesis-input" rows="6" placeholder="Tulis thesis bebas. Contoh: BBCA bocoran channel A, target 12k pakai PE 20x. Cek ulang 3 minggu" style="width:100%;padding:10px;border-radius:8px;background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border);font-family:inherit;resize:vertical;"></textarea>
+                <div style="display:flex;gap:8px;margin-top:12px;">
+                    <button class="btn btn-primary" onclick="extractThesisPreview()"><i class="fas fa-wand-magic-sparkles"></i> Extract Preview</button>
+                    <button class="btn" onclick="closeThesisCreate()">Batal</button>
+                </div>
+                <div id="thesis-preview" style="margin-top:16px;"></div>
             </div>
 
             <!-- ADD STOCK PANEL -->
@@ -631,8 +749,12 @@
 
     {% include 'partials/analysis_panel.html' %}
 
-    <script src="/frontend/js/app.js?v=20260413c"></script>
+    <!-- Load order: utils → dashboard → app (app calls fns from former two) -->
+    <script src="/frontend/js/utils.js?v=20260507f"></script>
+    <script src="/frontend/js/dashboard.js?v=20260507f"></script>
+    <script src="/frontend/js/app.js?v=20260507f"></script>
     <script src="/frontend/js/analysis.js?v=20260420b"></script>
+    <script src="/frontend/js/thesis.js?v=20260429a"></script>
     <script>
         if ('serviceWorker' in navigator) {
             navigator.serviceWorker.register('/static/sw.js').catch(() => {});

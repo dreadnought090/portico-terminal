@@ -32,3 +32,11 @@ def get_db():
 
 def init_db():
     Base.metadata.create_all(bind=engine)
+    # Enable WAL on SQLite — multiple writers (web requests + APScheduler cron
+    # + Telegram bots) need WAL to avoid "database is locked" under contention.
+    if not DATABASE_URL:
+        with engine.connect() as conn:
+            from sqlalchemy import text
+            conn.execute(text("PRAGMA journal_mode=WAL"))
+            conn.execute(text("PRAGMA synchronous=NORMAL"))
+            conn.commit()

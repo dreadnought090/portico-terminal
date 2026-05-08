@@ -346,6 +346,184 @@ function showPanel(panelId) {
         case 'watchlist': loadWatchlist(); break;
         case 'news': loadNews(); break;
         case 'disclosure': loadDisclosure(); break;
+        case 'idx-market': initIdxMarket(); break;
+    }
+}
+
+// ── IDX MARKET PANEL (broker, foreign flow, dividend, movers) ─────────
+
+let _idxMarketLoaded = { movers: false, broker: false, dividend: false };
+let _idxCurrentTab = 'movers';
+
+// HTML escape — IDX response text is external, never trust it raw.
+function _esc(s) {
+    if (s === null || s === undefined) return '';
+    return String(s).replace(/[&<>"']/g, c => (
+        { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+    ));
+}
+
+function _idxLocalYesterday() {
+    // Local-time YYYY-MM-DD for yesterday (toISOString uses UTC, wrong near midnight WIB).
+    const d = new Date();
+    d.setDate(d.getDate() - 1);
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+}
+
+function _idxDateParam() {
+    return document.getElementById('idx-market-datepicker')?.value || '';
+}
+
+function initIdxMarket() {
+    const picker = document.getElementById('idx-market-datepicker');
+    if (picker && !picker.value) {
+        picker.value = _idxLocalYesterday();
+    }
+    document.getElementById('idx-market-date').textContent = picker.value || 'today';
+    showIdxTab(_idxCurrentTab);
+    // Prefetch broker tab in background — same date, dedup means at most 2 IDX hits.
+    if (!_idxMarketLoaded.broker) loadIdxBroker();
+}
+
+function reloadIdxMarket() {
+    _idxMarketLoaded = { movers: false, broker: false, dividend: false };
+    document.getElementById('idx-market-date').textContent = _idxDateParam() || 'today';
+    showIdxTab(_idxCurrentTab);
+    if (_idxCurrentTab !== 'broker' && !_idxMarketLoaded.broker) loadIdxBroker();
+}
+
+function showIdxTab(tab) {
+    _idxCurrentTab = tab;
+    document.querySelectorAll('.idx-tab-btn').forEach(b => b.classList.toggle('active', b.dataset.idxTab === tab));
+    document.querySelectorAll('.idx-tab-content').forEach(el => el.classList.add('hidden'));
+    document.getElementById(`idx-tab-${tab}`).classList.remove('hidden');
+
+    if (tab === 'movers' && !_idxMarketLoaded.movers) loadIdxMovers();
+    else if (tab === 'broker' && !_idxMarketLoaded.broker) loadIdxBroker();
+    else if (tab === 'dividend' && !_idxMarketLoaded.dividend) loadIdxDividend();
+}
+
+async function loadIdxMovers() {
+    const date = _idxDateParam();
+    const url = `/api/idx/movers?top_n=20${date ? `&date=${encodeURIComponent(date)}` : ''}`;
+    try {
+        const r = await fetch(url);
+        const d = await r.json();
+        _renderMoversTable('idx-gainers-body', d.gainers || []);
+        _renderMoversTable('idx-losers-body', d.losers || []);
+        _idxMarketLoaded.movers = true;
+    } catch (e) {
+        document.getElementById('idx-gainers-body').innerHTML = `<tr><td colspan="4" class="placeholder-text">Error: ${_esc(e.message)}</td></tr>`;
+    }
+}
+
+function _renderMoversTable(bodyId, rows) {
+    const tbody = document.getElementById(bodyId);
+    if (!rows.length) {
+        tbody.innerHTML = '<tr><td colspan="4" class="placeholder-text">Tidak ada data (cek tanggal)</td></tr>';
+        return;
+    }
+    const cls = bodyId.includes('gainers') ? 'pnl-positive' : 'pnl-negative';
+    tbody.innerHTML = rows.map(r => {
+        const pct = Number(r.percent) || 0;
+        return `
+        <tr>
+            <td><strong>${_esc(r.code)}</strong></td>
+            <td>${fmtRp(r.close)}</td>
+            <td class="${cls}">${pct > 0 ? '+' : ''}${pct.toFixed(2)}%</td>
+            <td>${fmtBigNum(r.value)}</td>
+        </tr>`;
+    }).join('');
+}
+
+async function loadIdxBroker() {
+    const date = _idxDateParam();
+    const url = `/api/idx/broker-summary?length=50${date ? `&date=${encodeURIComponent(date)}` : ''}`;
+    const tbody = document.getElementById('idx-broker-body');
+    try {
+        const r = await fetch(url);
+        const d = await r.json();
+        const rows = d.rows || [];
+        if (!rows.length) {
+            tbody.innerHTML = '<tr><td colspan="6" class="placeholder-text">Tidak ada data</td></tr>';
+            return;
+        }
+        tbody.innerHTML = rows.map((r, i) => `
+            <tr>
+                <td>${i + 1}</td>
+                <td><strong>${_esc(r.brokerCode)}</strong></td>
+                <td>${_esc(r.brokerName)}</td>
+                <td>${fmtBigNum(r.value)}</td>
+                <td>${fmt(r.volume)}</td>
+                <td>${fmt(r.frequency)}</td>
+            </tr>
+        `).join('');
+        _idxMarketLoaded.broker = true;
+    } catch (e) {
+        tbody.innerHTML = `<tr><td colspan="6" class="placeholder-text">Error: ${_esc(e.message)}</td></tr>`;
+    }
+}
+
+async function loadIdxForeign() {
+    const ticker = document.getElementById('idx-foreign-ticker').value.trim().toUpperCase();
+    if (!ticker) return;
+    const date = _idxDateParam();
+    const url = `/api/idx/foreign-flow/${encodeURIComponent(ticker)}${date ? `?date=${encodeURIComponent(date)}` : ''}`;
+    const target = document.getElementById('idx-foreign-content');
+    target.innerHTML = '<p class="placeholder-text">Memuat...</p>';
+    try {
+        const r = await fetch(url);
+        const d = await r.json();
+        if (d.error || !d.data) {
+            target.innerHTML = `<p class="placeholder-text">${_esc(d.error || 'Tidak ada data')}</p>`;
+            return;
+        }
+        const x = d.data;
+        const netVal = Number(x.foreignNet) || 0;
+        const pctVal = Number(x.percent) || 0;
+        const netCls = netVal >= 0 ? 'pnl-positive' : 'pnl-negative';
+        const pctCls = pctVal >= 0 ? 'pnl-positive' : 'pnl-negative';
+        target.innerHTML = `
+            <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;">
+                <div class="market-card"><div class="card-label">Foreign Buy</div><div class="card-value">${fmtBigNum(x.foreignBuy)}</div></div>
+                <div class="market-card"><div class="card-label">Foreign Sell</div><div class="card-value">${fmtBigNum(x.foreignSell)}</div></div>
+                <div class="market-card"><div class="card-label">Net Flow</div><div class="card-value ${netCls}">${netVal >= 0 ? '+' : ''}${fmtBigNum(netVal)}</div></div>
+                <div class="market-card"><div class="card-label">${_esc(x.code)} · Close</div><div class="card-value">${fmtRp(x.close)}</div><div class="card-change ${pctCls}">${pctVal > 0 ? '+' : ''}${pctVal.toFixed(2)}%</div></div>
+            </div>
+            <p style="margin-top:8px;color:var(--text-secondary);font-size:11px;">${_esc(x.name)} · Total Value: ${fmtBigNum(x.value)}</p>
+        `;
+    } catch (e) {
+        target.innerHTML = `<p class="placeholder-text">Error: ${_esc(e.message)}</p>`;
+    }
+}
+
+async function loadIdxDividend() {
+    const tbody = document.getElementById('idx-dividend-body');
+    try {
+        const r = await fetch('/api/idx/dividend-calendar');
+        const d = await r.json();
+        const rows = d.rows || [];
+        if (!rows.length) {
+            tbody.innerHTML = '<tr><td colspan="7" class="placeholder-text">Tidak ada dividen bulan ini</td></tr>';
+            return;
+        }
+        tbody.innerHTML = rows.map(r => `
+            <tr>
+                <td><strong>${_esc(r.code)}</strong></td>
+                <td>${_esc(r.name)}</td>
+                <td>${fmtRp(r.cashDividend)}</td>
+                <td>${_esc(r.cumDate) || '-'}</td>
+                <td>${_esc(r.exDate) || '-'}</td>
+                <td>${_esc(r.recordDate) || '-'}</td>
+                <td>${_esc(r.paymentDate) || '-'}</td>
+            </tr>
+        `).join('');
+        _idxMarketLoaded.dividend = true;
+    } catch (e) {
+        tbody.innerHTML = `<tr><td colspan="7" class="placeholder-text">Error: ${_esc(e.message)}</td></tr>`;
     }
 }
 
@@ -362,47 +540,7 @@ if (typeof numeral !== 'undefined') {
 
 // ── FORMATTING ────────────────────────────────────────────────────────
 
-function fmt(num) {
-    if (num === null || num === undefined || isNaN(num)) return '-';
-    return numeral(Math.round(num)).format('0,0');
-}
-function fmtRp(num) {
-    if (num === null || num === undefined || isNaN(num)) return 'Rp -';
-    return 'Rp ' + numeral(Math.round(num)).format('0,0');
-}
-function fmtPct(num) {
-    if (num === null || num === undefined || isNaN(num)) return '-';
-    return `${num >= 0 ? '+' : ''}${num.toFixed(2)}%`;
-}
-function fmtChange(num) {
-    if (num === null || num === undefined || isNaN(num)) return '-';
-    return `${num >= 0 ? '+' : ''}${fmt(num)}`;
-}
-function pnlClass(num) {
-    if (num > 0) return 'positive';
-    if (num < 0) return 'negative';
-    return 'neutral';
-}
-function fmtBigNum(num) {
-    if (!num || num === 0) return '-';
-    const abs = Math.abs(num);
-    const sign = num < 0 ? '-' : '';
-    if (abs >= 1e12) return `${sign}Rp ${numeral(abs / 1e12).format('0.0')}T`;
-    if (abs >= 1e9) return `${sign}Rp ${numeral(abs / 1e9).format('0.0')}M`;
-    if (abs >= 1e6) return `${sign}Rp ${numeral(abs / 1e6).format('0.0')}Jt`;
-    return fmtRp(num);
-}
-function fmtPctVal(num) {
-    if (num === null || num === undefined || num === 0) return '-';
-    // TradingView & yfinance return margins/ratios as decimals (0.15 = 15%)
-    // Values > 1 or < -1 are already in percentage form (e.g., growth 120%)
-    if (Math.abs(num) <= 1) return numeral(num * 100).format('0.00') + '%';
-    return numeral(num).format('0.00') + '%';
-}
-function fmtDecimal(num, d = 2) {
-    if (!num) return '-';
-    return numeral(num).format('0.' + '0'.repeat(d));
-}
+// ── Formatters moved to utils.js (loaded before app.js) ─────────────
 
 // ── FAVORITE BROKER (PIN) SYSTEM ─────────────────────────────────────
 
@@ -674,178 +812,7 @@ function updateTickerBar(items) {
     track.innerHTML = html;
 }
 
-// ── DASHBOARD ─────────────────────────────────────────────────────────
-
-async function loadDashboard() {
-    try {
-        const [marketRes, portfolioRes] = await Promise.all([
-            fetch(`${API}/api/market`),
-            fetch(`${API}/api/portfolio`)
-        ]);
-        const market = await marketRes.json();
-        portfolioData = await portfolioRes.json();
-
-        // IHSG ticker
-        const ihsgEl = document.getElementById('ihsg-ticker');
-        const ihsgVal = market.ihsg || 0;
-        const ihsgChg = market.ihsg_change_pct || 0;
-        ihsgEl.textContent = `IHSG: ${fmt(ihsgVal)} (${fmtPct(ihsgChg)})`;
-        ihsgEl.style.color = ihsgChg >= 0 ? '#34d399' : '#f87171';
-        ihsgEl.style.borderColor = ihsgChg >= 0 ? 'rgba(16,185,129,0.3)' : 'rgba(239,68,68,0.3)';
-        ihsgEl.style.background = ihsgChg >= 0 ? 'rgba(16,185,129,0.08)' : 'rgba(239,68,68,0.08)';
-
-        document.getElementById('mc-ihsg').textContent = fmt(ihsgVal);
-        const ihsgChangeEl = document.getElementById('mc-ihsg-change');
-        ihsgChangeEl.textContent = `${fmtChange(market.ihsg_change)} (${fmtPct(ihsgChg)})`;
-        ihsgChangeEl.className = `card-change ${pnlClass(ihsgChg)}`;
-
-        const summary = portfolioData.summary;
-        animateCounter(document.getElementById('mc-portfolio-value'), summary.total_market_value, 800, 'Rp ');
-        animateCounter(document.getElementById('mc-total-cost'), summary.total_cost, 800, 'Rp ');
-        document.getElementById('mc-total-items').textContent = `${summary.total_items} saham`;
-
-        const pnlEl = document.getElementById('mc-pnl');
-        animateCounter(pnlEl, summary.total_pnl, 800, 'Rp ');
-        pnlEl.className = `card-value ${pnlClass(summary.total_pnl)}`;
-
-        const pnlPctEl = document.getElementById('mc-pnl-pct');
-        pnlPctEl.textContent = fmtPct(summary.total_pnl_pct);
-        pnlPctEl.className = `card-change ${pnlClass(summary.total_pnl_pct)}`;
-
-        const portfolioPnlEl = document.getElementById('mc-portfolio-pnl');
-        portfolioPnlEl.textContent = `P&L: ${fmtPct(summary.total_pnl_pct)}`;
-        portfolioPnlEl.className = `card-change ${pnlClass(summary.total_pnl_pct)}`;
-
-        renderTickerChart(portfolioData.combined || portfolioData.items);
-        renderSectorChart(portfolioData.by_sector);
-        renderTypeChart(portfolioData.by_type);
-        renderDashboardTable(portfolioData.items);
-        updateTickerBar(portfolioData.items);
-        updateBrokerSelectDropdown();
-
-        document.getElementById('dashboard-update-time').textContent = `Updated: ${new Date().toLocaleTimeString('id-ID')}`;
-
-        // Apply stagger animation to market cards
-        applyStaggerAnimation(document.querySelector('.market-cards'), '.market-card');
-    } catch (err) {
-        console.error('Dashboard error:', err);
-    }
-}
-
-function renderDashboardTable(items) {
-    const tbody = document.getElementById('dashboard-portfolio-body');
-    if (items.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="9" class="placeholder-text">Portfolio kosong. Tambahkan saham untuk memulai.</td></tr>`;
-        return;
-    }
-    tbody.innerHTML = items.map((item, idx) => `
-        <tr class="stagger-item" style="--delay:${idx * 40}ms">
-            <td class="ticker-cell" onclick="quickAnalysis('${item.ticker}')">${item.ticker}</td>
-            <td>${item.company_name || '-'}</td>
-            <td>${item.sub_sector || '-'}</td>
-            <td class="num">${fmt(item.lot)}</td>
-            <td class="num">${fmtRp(item.avg_price)}</td>
-            <td class="num">${fmtRp(item.current_price)}</td>
-            <td class="num">${fmtRp(item.market_value)}</td>
-            <td class="num ${pnlClass(item.unrealized_pnl)}">${fmtRp(item.unrealized_pnl)}</td>
-            <td class="num ${pnlClass(item.unrealized_pnl_pct)}">${fmtPct(item.unrealized_pnl_pct)}</td>
-        </tr>
-    `).join('');
-}
-
-function renderTickerChart(items) {
-    const canvas = document.getElementById('ticker-chart');
-    const legendEl = document.getElementById('ticker-chart-legend');
-    if (!canvas) return;
-    if (tickerChart) tickerChart.destroy();
-    const sorted = [...items].filter(i => i.market_value > 0).sort((a, b) => b.market_value - a.market_value);
-    if (sorted.length === 0) { canvas.style.display = 'none'; if (legendEl) legendEl.innerHTML = ''; return; }
-    canvas.style.display = 'block';
-    const total = sorted.reduce((a, b) => a + b.market_value, 0);
-    const data = sorted.map(i => i.market_value);
-    const colors = ['#3b82f6','#10b981','#f97316','#a78bfa','#22d3ee','#f59e0b','#ef4444','#ec4899','#8b5cf6','#14b8a6','#6366f1','#84cc16','#06b6d4','#e11d48','#7c3aed','#0ea5e9','#d946ef','#facc15','#4ade80','#fb923c'];
-    tickerChart = new Chart(canvas, {
-        type: 'doughnut',
-        data: { labels: sorted.map(i => i.ticker), datasets: [{ data, backgroundColor: colors.slice(0, data.length), borderWidth: 2, borderColor: 'rgba(6,10,19,0.8)', hoverOffset: 8 }] },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            cutout: '50%',
-            animation: { duration: 800, easing: 'easeOutQuart' },
-            plugins: {
-                legend: { display: false },
-                tooltip: {
-                    backgroundColor: 'rgba(14,23,38,0.95)',
-                    borderColor: 'rgba(249,115,22,0.3)',
-                    borderWidth: 1,
-                    titleColor: '#eaf0f6',
-                    bodyColor: '#8b9dc3',
-                    cornerRadius: 8,
-                    padding: 12,
-                    callbacks: { label: ctx => {
-                        const t = ctx.dataset.data.reduce((a, b) => a + b, 0);
-                        const pct = (ctx.raw / t * 100).toFixed(1);
-                        return ` ${ctx.label}: ${fmtRp(ctx.raw)} (${pct}%)`;
-                    }}
-                }
-            }
-        }
-    });
-    // HTML legend
-    if (legendEl) {
-        legendEl.innerHTML = sorted.map((item, i) => {
-            const pct = (item.market_value / total * 100).toFixed(1);
-            const color = colors[i % colors.length];
-            return `<div style="display:flex;align-items:center;gap:8px;padding:3px 0;font-size:11px;font-family:'JetBrains Mono',monospace;">
-                <span style="display:inline-block;width:12px;height:12px;border-radius:3px;background:${color};flex-shrink:0;"></span>
-                <span style="color:#eaf0f6;font-weight:500;">${item.ticker}</span>
-                <span style="color:#8b9dc3;">${pct}%</span>
-                <span style="color:#5a6f8c;">${fmtBigNum(item.market_value)}</span>
-            </div>`;
-        }).join('');
-    }
-}
-
-let tickerChartHeight = 280;
-function zoomTickerChart(dir) {
-    const wrapper = document.getElementById('ticker-chart-wrapper');
-    if (!wrapper) return;
-    if (dir === 0) { tickerChartHeight = 280; }
-    else if (dir > 0) { tickerChartHeight = Math.min(tickerChartHeight + 80, 600); }
-    else { tickerChartHeight = Math.max(tickerChartHeight - 80, 160); }
-    wrapper.style.height = tickerChartHeight + 'px';
-    if (tickerChart) setTimeout(() => tickerChart.resize(), 250);
-}
-
-function renderSectorChart(bySector) {
-    const canvas = document.getElementById('sector-chart');
-    const labels = Object.keys(bySector);
-    const data = labels.map(k => bySector[k].market_value);
-    const colors = ['#3b82f6','#10b981','#f97316','#a78bfa','#22d3ee','#f59e0b','#ef4444','#ec4899','#8b5cf6','#14b8a6','#f59e0b','#6366f1'];
-    if (sectorChart) sectorChart.destroy();
-    if (labels.length === 0) { canvas.style.display = 'none'; return; }
-    canvas.style.display = 'block';
-    sectorChart = new Chart(canvas, {
-        type: 'doughnut',
-        data: { labels, datasets: [{ data, backgroundColor: colors.slice(0, labels.length), borderWidth: 2, borderColor: 'rgba(6,10,19,0.8)', hoverOffset: 6 }] },
-        options: { responsive: true, cutout: '55%', animation: { duration: 800, easing: 'easeOutQuart' }, plugins: { legend: { position: 'right', labels: { color: '#eaf0f6', font: { size: 11, weight: '500' }, padding: 12 } }, tooltip: { backgroundColor: 'rgba(14,23,38,0.95)', borderColor: 'rgba(249,115,22,0.3)', borderWidth: 1, titleColor: '#eaf0f6', bodyColor: '#8b9dc3', cornerRadius: 8, padding: 12, callbacks: { label: ctx => ` ${ctx.label}: ${fmtRp(ctx.raw)}` } } } }
-    });
-}
-
-function renderTypeChart(byType) {
-    const canvas = document.getElementById('type-chart');
-    const labels = Object.keys(byType);
-    const data = labels.map(k => byType[k].market_value);
-    const colors = ['#f97316','#3b82f6','#10b981','#a78bfa','#f59e0b','#ef4444','#22d3ee'];
-    if (typeChart) typeChart.destroy();
-    if (labels.length === 0) { canvas.style.display = 'none'; return; }
-    canvas.style.display = 'block';
-    typeChart = new Chart(canvas, {
-        type: 'doughnut',
-        data: { labels, datasets: [{ data, backgroundColor: colors.slice(0, labels.length), borderWidth: 2, borderColor: 'rgba(6,10,19,0.8)', hoverOffset: 6 }] },
-        options: { responsive: true, cutout: '55%', animation: { duration: 800, easing: 'easeOutQuart' }, plugins: { legend: { position: 'right', labels: { color: '#eaf0f6', font: { size: 11, weight: '500' }, padding: 12 } }, tooltip: { backgroundColor: 'rgba(14,23,38,0.95)', borderColor: 'rgba(249,115,22,0.3)', borderWidth: 1, titleColor: '#eaf0f6', bodyColor: '#8b9dc3', cornerRadius: 8, padding: 12, callbacks: { label: ctx => ` ${ctx.label}: ${fmtRp(ctx.raw)}` } } } }
-    });
-}
+// ── Dashboard logic moved to dashboard.js (loaded before app.js) ───
 
 // ── PORTFOLIO ─────────────────────────────────────────────────────────
 
@@ -873,6 +840,7 @@ function renderPortfolioSummary(s) {
 
 let portfolioSortCol = null;
 let portfolioSortAsc = true;
+let currentPortfolioView = 'all';   // tracks last-selected tab so sort preserves it
 
 function sortPortfolio(col) {
     if (portfolioSortCol === col) {
@@ -888,9 +856,11 @@ function sortPortfolio(col) {
     const activeHeader = document.querySelector(`#portfolio-table th.sortable[onclick*="'${col}'"]`);
     if (activeHeader) activeHeader.classList.add(portfolioSortAsc ? 'sort-asc' : 'sort-desc');
 
-    // Sort items
+    // Sort BOTH items and combined arrays so the active view always shows
+    // sorted data regardless of which tab is selected. Group views (by-type,
+    // by-sector, by-broker) sort items inside each group via their own arrays.
     const stringCols = ['ticker', 'company_name', 'security_type', 'sub_sector', 'broker'];
-    portfolioData.items.sort((a, b) => {
+    const sortFn = (a, b) => {
         let va = a[col], vb = b[col];
         if (stringCols.includes(col)) {
             va = (va || '').toLowerCase();
@@ -899,13 +869,31 @@ function sortPortfolio(col) {
         }
         va = va || 0; vb = vb || 0;
         return portfolioSortAsc ? va - vb : vb - va;
-    });
-    showPortfolioView('all');
+    };
+    if (portfolioData.items) portfolioData.items.sort(sortFn);
+    if (portfolioData.combined) portfolioData.combined.sort(sortFn);
+    // Sort items inside each grouped view too
+    for (const groupSet of [portfolioData.by_type, portfolioData.by_sector, portfolioData.by_broker]) {
+        if (!groupSet) continue;
+        for (const g of Object.values(groupSet)) {
+            if (g && Array.isArray(g.items)) g.items.sort(sortFn);
+        }
+    }
+
+    // Re-render the SAME view that's currently active (don't force 'all')
+    showPortfolioView(currentPortfolioView);
 }
 
 function showPortfolioView(view, evt) {
+    currentPortfolioView = view;   // remember for next sort call
     document.querySelectorAll('.tab-bar .tab').forEach(t => t.classList.remove('active'));
-    if (evt && evt.target) evt.target.classList.add('active');
+    if (evt && evt.target) {
+        evt.target.classList.add('active');
+    } else {
+        // Programmatic call (e.g. from sort) — find the matching tab and mark active
+        const tab = document.querySelector(`.tab-bar .tab[onclick*="'${view}'"]`);
+        if (tab) tab.classList.add('active');
+    }
     const tbody = document.getElementById('portfolio-body');
     const items = portfolioData.items;
     if (items.length === 0) { tbody.innerHTML = `<tr><td colspan="14" class="placeholder-text">Portfolio kosong</td></tr>`; return; }
@@ -1304,6 +1292,7 @@ async function loadStockDetail() {
                 <button class="detail-tab" onclick="switchDetailTab(event,'financials')"><i class="fas fa-calculator"></i> Keuangan</button>
                 <button class="detail-tab" onclick="switchDetailTab(event,'statements')"><i class="fas fa-file-invoice-dollar"></i> Lap. Keuangan</button>
                 <button class="detail-tab" onclick="switchDetailTab(event,'ownership')"><i class="fas fa-users"></i> Kepemilikan</button>
+                <button class="detail-tab" onclick="switchDetailTab(event,'broker');loadBrokerSummary('${stock.ticker}');"><i class="fas fa-handshake"></i> Broker</button>
                 <button class="detail-tab" onclick="switchDetailTab(event,'news')"><i class="fas fa-newspaper"></i> Berita</button>
             </div>`;
 
@@ -1546,7 +1535,15 @@ async function loadStockDetail() {
                 </div>
             </div>`;
 
-        container.innerHTML = headerHtml + tabsHtml + overviewHtml + profileHtml + financialsHtml + statementsHtml + ownershipHtml + newsHtml;
+        // Broker tab — placeholder loaded on tab click via loadBrokerSummary()
+        const brokerHtml = `
+            <div class="detail-tab-content" id="dtab-broker">
+                <div id="broker-summary-content">
+                    <p class="placeholder-text">Klik tab Broker untuk memuat...</p>
+                </div>
+            </div>`;
+
+        container.innerHTML = headerHtml + tabsHtml + overviewHtml + profileHtml + financialsHtml + statementsHtml + ownershipHtml + brokerHtml + newsHtml;
 
         // Render chart
         if (hist.data && hist.data.length > 0) renderPriceChart(hist.data);
@@ -1555,6 +1552,98 @@ async function loadStockDetail() {
         container.innerHTML = `<p class="placeholder-text">Error: ${err.message}</p>`;
     }
 }
+
+async function loadBrokerSummary(ticker) {
+    const target = document.getElementById('broker-summary-content');
+    if (!target) return;
+    target.innerHTML = '<p class="placeholder-text">Memuat broker summary...</p>';
+    try {
+        const r = await fetch(`/api/stockbit/broker-summary/${encodeURIComponent(ticker)}`);
+        const d = await r.json();
+
+        // Not configured — show coming soon UX
+        if (d.configured === false) {
+            target.innerHTML = `
+                <div style="padding:32px;text-align:center;">
+                    <div style="font-size:48px;margin-bottom:8px;">🚧</div>
+                    <h3 style="margin:0 0 8px 0;color:var(--text-primary);">Coming Soon</h3>
+                    <p style="color:var(--text-secondary);max-width:480px;margin:0 auto 16px;">
+                        Per-ticker broker summary (Bandar Detector) belum aktif.
+                        Butuh akun StockBit untuk mengaktifkannya.
+                    </p>
+                    <details style="text-align:left;max-width:520px;margin:0 auto;background:var(--bg-secondary);padding:12px 16px;border-radius:8px;border:1px solid var(--border);">
+                        <summary style="cursor:pointer;color:var(--accent);font-weight:600;">Cara aktivasi</summary>
+                        <ol style="margin:12px 0;padding-left:20px;color:var(--text-secondary);font-size:13px;line-height:1.7;">
+                            <li>Buat akun di <a href="https://stockbit.com" target="_blank" style="color:#60a5fa;">stockbit.com</a> (gratis)</li>
+                            <li>Edit <code>~/MyBloomberg/.env</code>:
+                                <pre style="background:#000;padding:8px;margin:6px 0;border-radius:4px;font-size:11px;">STOCKBIT_EMAIL=email@kamu.com
+STOCKBIT_PASSWORD=password</pre>
+                            </li>
+                            <li>Restart Portico:
+                                <pre style="background:#000;padding:8px;margin:6px 0;border-radius:4px;font-size:11px;">launchctl unload ~/Library/LaunchAgents/com.user.portico.plist
+launchctl load -w ~/Library/LaunchAgents/com.user.portico.plist</pre>
+                            </li>
+                            <li>Refresh halaman ini, klik tab Broker lagi</li>
+                        </ol>
+                    </details>
+                </div>`;
+            return;
+        }
+
+        // Configured but URL discovery needed (default templates 404)
+        if (d.error && d.discovery_hint) {
+            target.innerHTML = `
+                <div style="padding:24px;">
+                    <h3 style="color:#f59e0b;">⚠ Endpoint discovery diperlukan</h3>
+                    <p style="color:var(--text-secondary);">${_esc(d.error)}</p>
+                    <pre style="background:var(--bg-secondary);padding:12px;border-radius:8px;font-size:11px;white-space:pre-wrap;color:var(--text-secondary);">${_esc(d.discovery_hint)}</pre>
+                    ${d.tried_urls ? `<details style="margin-top:12px;"><summary style="cursor:pointer;color:var(--text-secondary);">URL yang dicoba (${d.tried_urls.length})</summary><ul style="font-size:11px;color:var(--text-secondary);">${d.tried_urls.map(u => `<li>${_esc(u)}</li>`).join('')}</ul></details>` : ''}
+                </div>`;
+            return;
+        }
+
+        // Generic error
+        if (d.error || !d.rows) {
+            target.innerHTML = `<p class="placeholder-text">⚠ ${_esc(d.error || 'Tidak ada data')}</p>`;
+            return;
+        }
+
+        // Render rows table
+        const rows = d.rows;
+        if (!rows.length) {
+            target.innerHTML = '<p class="placeholder-text">Tidak ada broker activity untuk tanggal ini.</p>';
+            return;
+        }
+
+        target.innerHTML = `
+            <div style="margin-bottom:8px;color:var(--text-secondary);font-size:12px;">
+                ${_esc(d.ticker)} · ${_esc(d.date)} · ${rows.length} brokers
+            </div>
+            <table class="data-table">
+                <thead><tr>
+                    <th>Code</th><th>Name</th><th>Buy Vol</th><th>Buy Val</th><th>Sell Vol</th><th>Sell Val</th><th>Net Val</th>
+                </tr></thead>
+                <tbody>
+                    ${rows.map(r => {
+                        const net = Number(r.net_value) || (Number(r.buy_value || 0) - Number(r.sell_value || 0));
+                        const netCls = net > 0 ? 'pnl-positive' : net < 0 ? 'pnl-negative' : '';
+                        return `<tr>
+                            <td><strong>${_esc(r.broker_code)}</strong></td>
+                            <td>${_esc(r.broker_name)}</td>
+                            <td>${fmt(r.buy_volume)}</td>
+                            <td>${fmtBigNum(r.buy_value)}</td>
+                            <td>${fmt(r.sell_volume)}</td>
+                            <td>${fmtBigNum(r.sell_value)}</td>
+                            <td class="${netCls}">${net >= 0 ? '+' : ''}${fmtBigNum(net)}</td>
+                        </tr>`;
+                    }).join('')}
+                </tbody>
+            </table>`;
+    } catch (e) {
+        target.innerHTML = `<p class="placeholder-text">Error: ${_esc(e.message)}</p>`;
+    }
+}
+
 
 function switchDetailTab(evt, tabId) {
     document.querySelectorAll('.detail-tab').forEach(t => t.classList.remove('active'));

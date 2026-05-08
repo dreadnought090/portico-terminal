@@ -641,8 +641,51 @@
         });
     }
 
+    // ── Portfolio Analysis (Opus) ────────────────────────────────────
+    async function runPortfolioAnalysis() {
+        const btn = $("#pa-run-btn");
+        const statusEl = $("#pa-status");
+        const resultsEl = $("#pa-results");
+        const focus = ($("#pa-focus").value || "").trim();
+
+        btn.disabled = true;
+        btn.textContent = "🧠 Analyzing via Opus...";
+        statusEl.className = "analysis-status running";
+        statusEl.innerHTML = '⏳ Opus sedang analyze portofolio... (30-60 detik)';
+        resultsEl.innerHTML = "";
+
+        try {
+            const res = await fetch(`${API}/api/analysis/portfolio`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(focus ? { extra_focus: focus } : {}),
+            });
+            const data = await res.json();
+            if (!res.ok) {
+                throw new Error(data.detail || data.error || `HTTP ${res.status}`);
+            }
+            statusEl.className = "analysis-status ok";
+            statusEl.innerHTML =
+                `✓ Done · cost $${data.cost_usd} · ${(data.duration_ms/1000).toFixed(1)}s · ` +
+                `${data.tokens_in} in / ${data.tokens_out} out tokens`;
+            resultsEl.innerHTML = `<div class="pa-output">${renderMarkdown(data.analysis_md)}</div>`;
+        } catch (err) {
+            statusEl.className = "analysis-status error";
+            statusEl.innerHTML = `✗ ${escapeHtml(err.message)}`;
+        } finally {
+            btn.disabled = false;
+            btn.textContent = "🧠 Run Portfolio Analysis (Opus)";
+        }
+    }
+
+    // Attach handler when DOM is ready (inside init, but we do it here defensively)
+    document.addEventListener("DOMContentLoaded", () => {
+        const paBtn = document.getElementById("pa-run-btn");
+        if (paBtn) paBtn.addEventListener("click", runPortfolioAnalysis);
+    });
+
     // Expose for debugging
-    window.Analysis = { state, API, openPanel, closePanel, setActiveTab };
+    window.Analysis = { state, API, openPanel, closePanel, setActiveTab, runPortfolioAnalysis };
 
     // Init when DOM ready
     if (document.readyState === "loading") {

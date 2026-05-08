@@ -42,6 +42,36 @@ from backend.stock_service import (
 from backend.ocr_service import extract_stocks_from_image, clean_ocr_ticker
 from backend.analysis.council import run_council, estimate_council_cost
 from backend.analysis.research import draft_memo, estimate_draft_cost
+from backend.analysis.portfolio_analyzer import analyze_portfolio as run_portfolio_analysis
+from backend.briefing import run_briefing as briefing_run
+from backend.briefing import get_state as briefing_get_state, set_mode as briefing_set_mode
+from backend.briefing import register_intraday_cron, set_intraday_enabled
+from backend.subscription import start_bot as sub_start_bot, stop_bot as sub_stop_bot
+from backend.subscription import register_cron as sub_register_cron
+from backend.merriot import (
+    start_bot as merriot_start_bot,
+    stop_bot as merriot_stop_bot,
+    register_cron as merriot_register_cron,
+    router as merriot_router,
+)
+from backend.alerts import (
+    register_cron as alerts_register_cron,
+    router as alerts_router,
+)
+from backend.ginger import (
+    start_bot as ginger_start_bot,
+    stop_bot as ginger_stop_bot,
+)
+from backend.property import (
+    start_bot as property_start_bot,
+    stop_bot as property_stop_bot,
+    register_cron as property_register_cron,
+)
+from backend.email_inbox import register_cron as email_register_cron
+from backend.idx_registry import (
+    register_cron as idx_registry_register_cron,
+    bootstrap_if_empty as idx_registry_bootstrap,
+)
 
 scheduler = AsyncIOScheduler() if USE_SCHEDULER else None
 
@@ -67,13 +97,29 @@ def _update_item_price(item: PortfolioItem, data: dict, db: Session = None):
 
 
 async def update_all_portfolio_prices():
-    """Background job: update prices for all portfolio items."""
+    """Background job: update prices for all portfolio items.
+
+    Uses IDX batch endpoint (1 HTTP call returns ~900 stocks) for IDX saham —
+    far cheaper than per-ticker yfinance. Reksadana still uses NAV scrape.
+    Other (foreign stocks, etc.) fall back to yfinance individually.
+    """
     from backend.database import SessionLocal
+    from backend.idx_native import fetch_stock_summary
+
+    # Pre-fetch IDX batch ONCE for all stock-type items.
+    idx_by_code: dict[str, dict] = {}
+    try:
+        rows = await fetch_stock_summary()  # cached 5min for current day
+        idx_by_code = {r["code"]: r for r in rows}
+    except Exception:
+        logger.exception("IDX batch fetch failed; falling back to yfinance per-ticker")
+
     db = SessionLocal()
     try:
         items = db.query(PortfolioItem).all()
         for item in items:
             try:
+                # Reksadana — NAV scrape (no batch alternative)
                 if item.security_type and item.security_type.lower() == "reksadana":
                     nav = get_reksadana_nav(item.company_name or item.ticker)
                     if nav:
@@ -83,6 +129,21 @@ async def update_all_portfolio_prices():
                         item.unrealized_pnl_pct = (item.unrealized_pnl / item.total_cost * 100) if item.total_cost else 0
                         item.last_updated = datetime.now(timezone.utc)
                     continue
+
+                # Stock — try IDX batch first
+                code = (item.ticker or "").upper().replace(".JK", "")
+                row = idx_by_code.get(code)
+                if row and row.get("close"):
+                    data = {
+                        "last_price": row["close"],
+                        "change": row.get("change", 0),
+                        "change_pct": row.get("percent", 0),
+                        "volume": row.get("volume", 0),
+                    }
+                    _update_item_price(item, data, db)
+                    continue
+
+                # Fallback yfinance (e.g., foreign tickers, IDX missed)
                 data = fetch_stock_data(item.ticker)
                 if "error" not in data:
                     _update_item_price(item, data, db)
@@ -138,16 +199,62 @@ def take_portfolio_snapshot(db: Session = None):
 async def lifespan(app: FastAPI):
     init_db()
     if scheduler:
-        scheduler.add_job(update_all_portfolio_prices, "interval", minutes=15, id="price_update")
+        # Price update — 5-min market hours via IDX batch (1 call → ~900 stocks).
+        # Two cron entries to bound 16:00-16:30 cleanly.
+        scheduler.add_job(
+            update_all_portfolio_prices, "cron",
+            day_of_week="mon-fri", hour="9-15", minute="*/5",
+            id="price_update_main",
+        )
+        scheduler.add_job(
+            update_all_portfolio_prices, "cron",
+            day_of_week="mon-fri", hour="16", minute="0,5,10,15,20,25,30",
+            id="price_update_close",
+        )
+        # Off-hours catch-up — once per hour for reksadana NAV updates
+        # (NAV publishes after market close, batch IDX fetch returns same EOD)
+        scheduler.add_job(
+            update_all_portfolio_prices, "cron",
+            hour="17,20,7", minute=0,
+            id="price_update_offhours",
+        )
         scheduler.add_job(take_portfolio_snapshot, "cron", hour=16, minute=5, id="daily_snapshot")
+        # Daily IDX disclosure briefing — 08:00 WIB. APScheduler uses the system
+        # local timezone by default (Asia/Jakarta on this machine), so `hour=8`
+        # means 08:00 WIB directly. Earlier mistake: using hour=1 assumed UTC,
+        # which fired the cron at 01:00 WIB instead.
+        scheduler.add_job(briefing_run, "cron", hour=8, minute=0, id="daily_briefing")
+        register_intraday_cron(scheduler)  # 09:00 catch-up + 09:05–16:15 every 5min Mon-Fri
+        sub_register_cron(scheduler)  # subscription expiry reminder + kick + feedback digest
+        merriot_register_cron(scheduler)  # daily 07:30 WIB thesis reminders
+        alerts_register_cron(scheduler)   # 5-min price alert scan during market hours
+        email_register_cron(scheduler)    # email broker tx polling (no-op if EMAIL_USER missing)
+        idx_registry_register_cron(scheduler)  # daily 17:00 WIB ticker registry refresh
+        property_register_cron(scheduler)  # property reminders + lease expiry alerts (08:00/08:05 WIB)
         scheduler.start()
+    # Bootstrap IDX ticker registry if empty (~960 tickers from /TradingSummary)
+    try:
+        await idx_registry_bootstrap()
+    except Exception:
+        import logging
+        logging.getLogger("app").exception("idx_registry bootstrap failed")
+    sub_start_bot()  # start subscription bot polling loop (no-op if SUBSCRIPTION_BOT_TOKEN missing)
+    merriot_start_bot()  # thesis tracker bot (no-op if MERRIOT_BOT_TOKEN missing)
+    ginger_start_bot()   # conversational assistant bot (no-op if GINGER_BOT_TOKEN missing)
+    property_start_bot() # property manager bot (no-op if PROPERTY_BOT_TOKEN missing)
     take_portfolio_snapshot()
     yield
+    await property_stop_bot()
+    await ginger_stop_bot()
+    await merriot_stop_bot()
+    await sub_stop_bot()
     if scheduler:
         scheduler.shutdown()
 
 
 app = FastAPI(title="Portico", version="1.0.0", lifespan=lifespan)
+app.include_router(merriot_router)
+app.include_router(alerts_router)
 
 AUTH_PASSWORD = os.environ.get("AUTH_PASSWORD", "")
 
@@ -318,10 +425,96 @@ async def get_financial_statements(ticker: str, quarters: int = Query(default=8,
 
 
 @app.get("/api/disclosure")
-async def get_disclosure(ticker: str = "", page: int = 0):
-    """Get IDX corporate disclosures."""
-    disclosures = await fetch_idx_disclosure(ticker, page=page, page_size=50)
-    return {"disclosures": disclosures, "page": page, "hasMore": len(disclosures) >= 50}
+async def get_disclosure(
+    ticker: str = "",
+    page: int = 0,
+    page_size: int = 200,
+    include_nonstock: bool = False,
+):
+    # IDX global feed (no ticker filter) returns non-contiguous batches when
+    # page_size is small (e.g. 50) — adjacent pages skip days. Fetching in a
+    # single larger window avoids this. 200 covers ~24-48h reliably.
+    disclosures = await fetch_idx_disclosure(
+        ticker, page=page, page_size=page_size, include_nonstock=include_nonstock
+    )
+    return {"disclosures": disclosures, "page": page, "hasMore": len(disclosures) >= page_size}
+
+
+# ── IDX Native Data ───────────────────────────────────────────────────
+# Ports of NeaByteLab/IDX-API endpoints. See backend/idx_native.py.
+
+@app.get("/api/stockbit/broker-summary/{ticker}")
+async def stockbit_broker_summary_per_ticker(
+    ticker: str,
+    date: str = Query("", max_length=10),
+):
+    """Per-ticker broker summary via StockBit (env-gated).
+
+    If STOCKBIT_EMAIL/PASSWORD not set, returns {configured: false} with hint.
+    Frontend can then show 'feature not configured' message.
+    """
+    from backend.stockbit import fetch_broker_summary
+    try:
+        result = await fetch_broker_summary(ticker, date or None)
+        return result
+    except Exception as e:
+        print(f"[StockBit broker-summary] {e}")
+        return {"configured": True, "ticker": ticker.upper(), "error": str(e)}
+
+
+@app.get("/api/idx/broker-summary")
+async def idx_broker_summary(
+    date: str = Query("", max_length=10),
+    length: int = Query(200, ge=1, le=2000),
+):
+    from backend.idx_native import fetch_broker_summary
+    try:
+        rows = await fetch_broker_summary(date or None, length=length)
+        return {"date": date or "today", "rows": rows}
+    except Exception as e:
+        print(f"[IDX broker-summary] {e}")
+        return {"error": str(e), "rows": []}
+
+
+@app.get("/api/idx/foreign-flow/{ticker}")
+async def idx_foreign_flow(ticker: str, date: str = Query("", max_length=10)):
+    from backend.idx_native import fetch_foreign_flow
+    try:
+        data = await fetch_foreign_flow(ticker, date or None)
+        if data is None:
+            return {"error": "no data for ticker on this date", "data": None}
+        return {"data": data}
+    except Exception as e:
+        print(f"[IDX foreign-flow] {e}")
+        return {"error": str(e), "data": None}
+
+
+@app.get("/api/idx/dividend-calendar")
+async def idx_dividend_calendar(
+    year: int = Query(0, ge=0, le=2100),
+    month: int = Query(0, ge=0, le=12),
+):
+    from backend.idx_native import fetch_dividend_calendar
+    try:
+        rows = await fetch_dividend_calendar(year or None, month or None)
+        return {"year": year, "month": month, "rows": rows}
+    except Exception as e:
+        print(f"[IDX dividend-calendar] {e}")
+        return {"error": str(e), "rows": []}
+
+
+@app.get("/api/idx/movers")
+async def idx_movers(
+    date: str = Query("", max_length=10),
+    top_n: int = Query(20, ge=1, le=100),
+):
+    from backend.idx_native import fetch_movers
+    try:
+        data = await fetch_movers(date or None, top_n=top_n)
+        return data
+    except Exception as e:
+        print(f"[IDX movers] {e}")
+        return {"error": str(e), "gainers": [], "losers": []}
 
 
 # ── Portfolio API ─────────────────────────────────────────────────────
@@ -774,7 +967,10 @@ async def import_from_ocr(req: OcrImportRequest, db: Session = Depends(get_db)):
         sector = data.get("sector", "Other")
 
         lot = stock.get("lot", 0)
-        shares = stock.get("shares", lot * 100)
+        # Always derive shares from lot for Saham (security_type hardcoded below).
+        # OCR sometimes mis-reads broker screenshots and returns shares = lot
+        # (same column re-used). Force lot×100 to keep data consistent.
+        shares = lot * 100 if lot > 0 else stock.get("shares", 0)
         avg_price = stock.get("avg_price", current_price)
         total_cost = shares * avg_price
         market_value = shares * current_price
@@ -1241,6 +1437,235 @@ def save_memo(ticker: str, body: MemoRequest, db: Session = Depends(get_db)):
     db.refresh(memo)
 
     return {"message": "Memo saved", "id": memo.id, "version": memo.version}
+
+
+# ── Portfolio Analysis (Opus) ────────────────────────────────────────
+
+
+class PortfolioAnalyzeRequest(BaseModel):
+    extra_focus: Optional[str] = None  # optional: "fokus ke posisi rugi >30%" etc
+
+
+@app.post("/api/analysis/portfolio")
+def analysis_portfolio_run(req: PortfolioAnalyzeRequest = None, db: Session = Depends(get_db)):
+    """Run Opus-powered portfolio analysis. Returns markdown analysis + cost."""
+    extra = req.extra_focus if req else None
+    result = run_portfolio_analysis(db, extra_focus=extra)
+    if result.get("error"):
+        raise HTTPException(status_code=400, detail=result["error"])
+    return result
+
+
+# ── Briefing Bot API ─────────────────────────────────────────────────
+
+
+class BriefingModeRequest(BaseModel):
+    mode: str  # "off" | "header_only" | "full"
+
+
+@app.get("/api/briefing/status")
+def briefing_status():
+    return briefing_get_state()
+
+
+@app.post("/api/briefing/mode")
+def briefing_mode(req: BriefingModeRequest):
+    try:
+        return briefing_set_mode(req.mode)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+# ── IDX Ticker Registry ──────────────────────────────────────────────────
+
+@app.get("/api/idx/tickers")
+def idx_tickers_list(q: str = "", limit: int = 50):
+    """List active IDX tickers, optionally filtered by code prefix or name."""
+    from backend.idx_registry import list_active, search, count
+    if q:
+        return {"items": search(q, limit=min(limit, 200)), "stats": count()}
+    items = list_active()[:min(limit, 1000)]
+    return {"items": items, "stats": count()}
+
+
+@app.get("/api/idx/tickers/{code}")
+def idx_ticker_get(code: str):
+    """Lookup single ticker."""
+    from backend.idx_registry import get_by_code
+    row = get_by_code(code)
+    if not row:
+        raise HTTPException(status_code=404, detail=f"Ticker {code.upper()} not in registry")
+    return row
+
+
+@app.post("/api/idx/tickers/refresh")
+async def idx_tickers_refresh():
+    """Manual trigger for daily refresh (admin-only ideally; gated by network in dev)."""
+    from backend.idx_registry import refresh_idx_tickers
+    return await refresh_idx_tickers()
+
+
+# ── Observability ────────────────────────────────────────────────────────
+
+_SPARK_CACHE: dict[str, tuple[float, dict]] = {}
+_SPARK_TTL = 1800  # 30 min
+
+
+@app.get("/api/stocks/sparklines")
+async def stocks_sparklines(tickers: str = "", days: int = 7):
+    """Bulk fetch close prices for sparklines + daily Δ.
+
+    Returns: {<ticker>: {"closes": [..N close prices..], "change": delta_last_2_days,
+                          "change_pct": pct, "last": last_close}}
+    Cache: 30 min in-memory. yfinance in parallel via asyncio.to_thread + semaphore.
+    """
+    from datetime import datetime as _dt
+    import asyncio as _aio
+
+    codes = [t.strip().upper() for t in tickers.split(",") if t.strip()]
+    if not codes:
+        return {}
+    days = max(2, min(days, 30))
+    period = "1mo" if days > 14 else "1mo"  # yfinance min reliable period
+
+    now = _dt.now().timestamp()
+    cache_key = f"{days}"
+    out: dict = {}
+    to_fetch = []
+    for c in codes:
+        cached = _SPARK_CACHE.get(f"{c}:{cache_key}")
+        if cached and (now - cached[0]) < _SPARK_TTL:
+            out[c] = cached[1]
+        else:
+            to_fetch.append(c)
+
+    if to_fetch:
+        sem = _aio.Semaphore(8)
+
+        async def _one(code: str) -> tuple[str, dict]:
+            async with sem:
+                hist = await _aio.to_thread(fetch_stock_history, code, period)
+                closes = [h["close"] for h in (hist or []) if h.get("close")][-days:]
+                if len(closes) < 2:
+                    return code, {"closes": closes, "change": 0, "change_pct": 0, "last": closes[-1] if closes else 0}
+                last, prev = closes[-1], closes[-2]
+                change = last - prev
+                pct = (change / prev * 100) if prev else 0
+                return code, {
+                    "closes": closes,
+                    "change": round(change, 2),
+                    "change_pct": round(pct, 2),
+                    "last": last,
+                }
+
+        results = await _aio.gather(*[_one(c) for c in to_fetch], return_exceptions=True)
+        for r in results:
+            if isinstance(r, Exception):
+                continue
+            code, data = r
+            _SPARK_CACHE[f"{code}:{cache_key}"] = (now, data)
+            out[code] = data
+
+    return out
+
+
+@app.get("/api/observability/status")
+def observability_status():
+    """Compact system health snapshot — cron jobs, alerts, email, registry, bots."""
+    import json as _json
+    from datetime import datetime, timezone, timedelta as _td
+    from backend.models import PriceAlert
+    from backend.database import SessionLocal as _SL
+
+    out = {"timestamp": datetime.now(timezone.utc).isoformat()}
+
+    # Scheduled jobs (APScheduler)
+    if scheduler:
+        jobs = []
+        try:
+            for j in scheduler.get_jobs():
+                next_run = j.next_run_time.isoformat() if j.next_run_time else None
+                jobs.append({
+                    "id": j.id,
+                    "next_run": next_run,
+                    "trigger": str(j.trigger)[:60],
+                })
+        except Exception as e:
+            jobs = [{"error": str(e)}]
+        out["cron"] = {"running": True, "jobs": jobs, "count": len(jobs)}
+    else:
+        out["cron"] = {"running": False, "jobs": [], "count": 0}
+
+    # Bots active (check internal _app references)
+    bots = {}
+    for name, mod_path in [
+        ("subscription", "backend.subscription.bot"),
+        ("merriot", "backend.merriot.bot"),
+        ("ginger", "backend.ginger.bot"),
+    ]:
+        try:
+            mod = __import__(mod_path, fromlist=["_app"])
+            bots[name] = bool(getattr(mod, "_app", None))
+        except Exception:
+            bots[name] = False
+    out["bots"] = bots
+
+    # Alerts
+    db = _SL()
+    try:
+        armed = db.query(PriceAlert).filter(PriceAlert.status == "armed").count()
+        triggered_24h = db.query(PriceAlert).filter(
+            PriceAlert.status == "triggered",
+            PriceAlert.triggered_at >= datetime.now(timezone.utc) - _td(hours=24),
+        ).count() if hasattr(PriceAlert, "triggered_at") else 0
+        out["alerts"] = {"armed": armed, "triggered_24h": triggered_24h}
+    except Exception as e:
+        out["alerts"] = {"error": str(e)}
+    finally:
+        db.close()
+
+    # Briefing state
+    try:
+        with open(os.path.join(BASE_DIR, "data", "briefing_state.json")) as f:
+            bs = _json.load(f)
+        out["briefing"] = {
+            "mode": bs.get("mode"),
+            "last_run_at": bs.get("last_run_at"),
+            "last_run_status": bs.get("last_run_status"),
+            "last_run_messages": bs.get("last_run_messages_sent"),
+            "last_run_cost_usd": bs.get("last_run_cost_usd"),
+            "intraday_enabled": bs.get("intraday_enabled"),
+            "last_intraday_at": bs.get("last_intraday_at"),
+        }
+    except Exception:
+        out["briefing"] = None
+
+    # Email inbox state
+    try:
+        with open(os.path.join(BASE_DIR, "data", "email_inbox_state.json")) as f:
+            es = _json.load(f)
+        accounts = es.get("accounts", {})
+        out["email_inbox"] = {
+            "configured_accounts": len(accounts),
+            "last_state": {u: v.get("updated_at") for u, v in accounts.items()},
+        }
+    except Exception:
+        out["email_inbox"] = {"configured_accounts": 0, "last_state": {}}
+
+    # IDX registry
+    try:
+        from backend.idx_registry import count as idx_count
+        out["idx_registry"] = idx_count()
+    except Exception as e:
+        out["idx_registry"] = {"error": str(e)}
+
+    return out
+
+
+@app.post("/api/briefing/run-now")
+async def briefing_run_now(force_mode: Optional[str] = None):
+    # `force_mode` lets caller test full pipeline even when state.mode=off (e.g. dry run).
+    return await briefing_run(force_mode=force_mode)
 
 
 if __name__ == "__main__":

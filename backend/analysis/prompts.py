@@ -1,6 +1,8 @@
 """Prompt library for Analysis Mode. Versioned — bump PROMPT_VERSION when editing."""
 
-PROMPT_VERSION = "council-v1.0"
+from backend.skills._checklists import VALUATION_CHECKLIST
+
+PROMPT_VERSION = "council-v1.1"  # bump: added valuation checklist to roles
 
 
 COUNCIL_ROLES = {
@@ -130,6 +132,13 @@ Output format:
 [Past company/event dengan setup serupa, outcome apa]""",
     },
 }
+
+
+# Append valuation reference frame to all council roles — gives every analyst
+# the same baseline framework. ~140 tokens added per role; cached after first
+# call by Anthropic prompt caching (>1024 tok system prompt).
+for _role in COUNCIL_ROLES.values():
+    _role["system"] += "\n\n" + VALUATION_CHECKLIST
 
 
 SYNTHESIZER_PROMPT = """Kamu Chief Investment Officer. Tugas: synthesize 4 analyst views jadi actionable recommendation untuk portfolio allocator.

@@ -342,7 +342,29 @@ async def fetch_news_for_ticker(ticker: str) -> list:
         return []
 
 
-async def fetch_idx_disclosure(ticker: str = "", page: int = 0, page_size: int = 50) -> list:
+_STOCK_TICKER_RE = re.compile(r"^[A-Z]{4}$")
+
+
+def _is_stock_ticker(ticker: str) -> bool:
+    # IDX stock tickers are 4 uppercase letters. Reksadana/ETF start with X
+    # (XMSK, XPIN, etc — investment managers). "INDEKS" is IDX's pseudo-ticker
+    # for index maintenance notices. Structured warrants use 2-letter issuer
+    # codes (HD, etc). Bonds/sukuk use hyphenated forms (R-ABFII).
+    if not ticker or not _STOCK_TICKER_RE.match(ticker):
+        return False
+    if ticker.startswith("X"):
+        return False
+    if ticker == "INDEKS":
+        return False
+    return True
+
+
+async def fetch_idx_disclosure(
+    ticker: str = "",
+    page: int = 0,
+    page_size: int = 50,
+    include_nonstock: bool = False,
+) -> list:
     """Fetch corporate disclosures/keterbukaan informasi from IDX using curl_cffi."""
     try:
         from curl_cffi import requests as cffi_requests
@@ -371,12 +393,25 @@ async def fetch_idx_disclosure(ticker: str = "", page: int = 0, page_size: int =
                 attachments = item.get("attachments", [])
 
                 link = ""
+                all_links: list[str] = []
                 if attachments and isinstance(attachments, list):
-                    for att in attachments:
-                        full_path = att.get("FullSavePath", "")
-                        if full_path:
-                            link = full_path
-                            break
+                    # Each disclosure has a cover letter (IsAttachment=False, the e-reporting
+                    # form) and one or more real attachments (IsAttachment=True, suffixed
+                    # _lamp1.pdf etc). For a primary `link` pick the first real attachment,
+                    # so legacy callers (UI disclosure tab) see the substantive document.
+                    # Also expose `all_links` (real attachments preferred, cover last) so
+                    # pipelines that need full content (e.g. form X.H.1-6 insider reports
+                    # where substantive data is split across attachments) can fetch all.
+                    real_links = [
+                        a.get("FullSavePath", "") for a in attachments
+                        if isinstance(a, dict) and a.get("IsAttachment") and a.get("FullSavePath")
+                    ]
+                    cover_links = [
+                        a.get("FullSavePath", "") for a in attachments
+                        if isinstance(a, dict) and not a.get("IsAttachment") and a.get("FullSavePath")
+                    ]
+                    all_links = real_links + cover_links
+                    link = real_links[0] if real_links else (cover_links[0] if cover_links else "")
 
                 disc_ticker = peng.get("Kode_Emiten", "").strip()
                 title = peng.get("JudulPengumuman", "")
@@ -390,12 +425,18 @@ async def fetch_idx_disclosure(ticker: str = "", page: int = 0, page_size: int =
                     "date": date_raw,
                     "type": disc_type,
                     "link": link,
+                    "all_links": all_links,
                 })
             return disclosures
 
         # Run sync curl_cffi in a thread to avoid blocking the event loop
         loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(None, _fetch_sync)
+        raw = await loop.run_in_executor(None, _fetch_sync)
+
+        if include_nonstock or ticker:
+            # When caller requested a specific ticker, trust their intent.
+            return raw
+        return [d for d in raw if _is_stock_ticker(d["ticker"])]
     except Exception as e:
         print(f"[DISCLOSURE ERROR] {e}")
         return []

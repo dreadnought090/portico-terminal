@@ -10,6 +10,7 @@
         <div class="analysis-tab" data-tab="memo">Memo</div>
         <div class="analysis-tab" data-tab="history">History</div>
         <div class="analysis-tab" data-tab="research">Deep Research</div>
+        <div class="analysis-tab" data-tab="portfolio">Portfolio</div>
         <div class="analysis-tab disabled" title="Coming soon">Sentiment</div>
     </div>
 
@@ -140,6 +141,33 @@
             <div class="analysis-status" id="dr-status"></div>
 
             <div class="analysis-results" id="dr-results"></div>
+        </div>
+
+        <!-- Portfolio tab — Opus-powered holistic portfolio analysis -->
+        <div class="analysis-tab-content" data-tab="portfolio" style="display:none;">
+            <div class="deep-research-intro" style="margin-bottom:10px;">
+                <strong>🧠 Portfolio Health Analysis</strong><br>
+                <span style="opacity:0.8; font-size:12px;">
+                    Klik tombol di bawah → Opus analyze portofolio Anda (health scorecard, risk flags, actionable recs).
+                    Cost ~$0.25 per run · latency ~30-60 detik.
+                </span>
+            </div>
+
+            <label class="analysis-label" style="margin-top:10px; display:block;">
+                Fokus tambahan (opsional — kosongkan untuk full comprehensive):
+            </label>
+            <textarea
+                id="pa-focus"
+                class="analysis-thesis-editor"
+                style="min-height:60px;"
+                placeholder="Contoh: fokus ke posisi rugi >30% dan berikan exit strategy; atau: evaluasi konsentrasi banking; atau kosongkan buat full analysis"></textarea>
+
+            <div class="analysis-actions" style="margin-top:12px;">
+                <button class="analysis-btn primary" id="pa-run-btn">🧠 Run Portfolio Analysis (Opus)</button>
+            </div>
+
+            <div class="analysis-status" id="pa-status"></div>
+            <div class="analysis-results" id="pa-results"></div>
         </div>
 
     </div>
