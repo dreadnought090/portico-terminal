@@ -17,3 +17,7 @@ venv/
 *BACKUP*.txt
 *.key
 *.pem
+
+# Build artifacts
+graphify-out/
+legacy/
